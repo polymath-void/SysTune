@@ -1,0 +1,6 @@
+id=SysTune
+name=SysTune
+version=1.2
+versionCode=3
+author=RahmanShuvo
+description=Advanced CPU/GPU/Battery profile manager with AI auto-switching and min/max freq
