@@ -1,19 +1,19 @@
 #!/system/bin/sh
 # ==========================================
-# MTK Battery Safe Charging Controller v2.2
+# MTK Battery Safe Charging Controller v3.0
 # Author: Rahman
-# MTK-safe, UI-safe, kernel-driven
+# Milestone-based, MTK-safe, UI-safe
 # ==========================================
 
 MODDIR="/data/adb/modules/SysTune"
 PIDFILE="$MODDIR/battery_safe.pid"
 LOG="$MODDIR/logs/battery_safe.log"
 STATUS_FILE="$MODDIR/state/battery_safe.status"
+
 CHG_CTRL="/sys/devices/platform/soc/11280000.i2c/i2c-5/5-0034/11280000.i2c:mt6375@34:mtk_gauge/power_supply/battery/disable"
 
 CHECK_INTERVAL=15
-PAUSE_TIME=300        # 5 min disable
-SYNC_TIME=60          # 1 min enable (UI sync)
+PAUSE_TIME=300   # 5 minutes pause at milestones
 
 # ---------- Safety ----------
 safe_exit() {
@@ -31,9 +31,13 @@ fi
 echo $$ > "$PIDFILE"
 
 mkdir -p "$MODDIR/logs" "$MODDIR/state"
-echo "⚡ Battery Safe started $(date)" >> "$LOG"
+echo "⚡ Battery Safe v3 started $(date)" >> "$LOG"
 
 # ---------- State ----------
+PAUSE_80_DONE=0
+PAUSE_90_DONE=0
+PAUSE_95_DONE=0
+
 MODE="NORMAL"
 TIMER=0
 
@@ -41,49 +45,54 @@ TIMER=0
 while true; do
     BATTERY=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
     STATUS=$(cat /sys/class/power_supply/battery/status 2>/dev/null)
+    NOW=$(date +%s)
 
-    # Charger removed → exit
+    # ---- Charger removed → exit safely ----
     if [ "$STATUS" != "Charging" ]; then
         echo "🔌 Charger disconnected $(date)" >> "$LOG"
         safe_exit
     fi
 
-    NOW=$(date +%s)
-
-    # ---- 80–89 zone ----
-    if [ "$BATTERY" -ge 80 ] && [ "$BATTERY" -lt 90 ]; then
-        if [ "$MODE" = "NORMAL" ]; then
-            echo 1 > "$CHG_CTRL"
-            MODE="PAUSE"
-            TIMER=$NOW
-            echo "⏸ Pause @80% $(date)" >> "$LOG"
-        fi
-    fi
-
-    # ---- 90–99 zone ----
-    if [ "$BATTERY" -ge 90 ] && [ "$BATTERY" -lt 100 ]; then
-        if [ "$MODE" = "NORMAL" ]; then
-            echo 1 > "$CHG_CTRL"
-            MODE="PAUSE"
-            TIMER=$NOW
-            echo "⏸ Pause @90% $(date)" >> "$LOG"
-        fi
-    fi
-
-    # ---- Pause window ----
-    if [ "$MODE" = "PAUSE" ] && [ $((NOW - TIMER)) -ge "$PAUSE_TIME" ]; then
+    # ---- Always allow charging below 80% ----
+    if [ "$BATTERY" -lt 80 ]; then
         echo 0 > "$CHG_CTRL"
-        MODE="SYNC"
-        TIMER=$NOW
-        echo "▶ Sync charging $(date)" >> "$LOG"
+        MODE="NORMAL"
+        TIMER=0
     fi
 
-    # ---- Sync window ----
-    if [ "$MODE" = "SYNC" ] && [ $((NOW - TIMER)) -ge "$SYNC_TIME" ]; then
+    # ---- 80% milestone ----
+    if [ "$BATTERY" -ge 80 ] && [ "$BATTERY" -lt 90 ] && [ "$PAUSE_80_DONE" -eq 0 ]; then
         echo 1 > "$CHG_CTRL"
+        PAUSE_80_DONE=1
         MODE="PAUSE"
         TIMER=$NOW
-        echo "⏸ Resume pause $(date)" >> "$LOG"
+        echo "⏸ Pause @80% $(date)" >> "$LOG"
+    fi
+
+    # ---- 90% milestone ----
+    if [ "$BATTERY" -ge 90 ] && [ "$BATTERY" -lt 95 ] && [ "$PAUSE_90_DONE" -eq 0 ]; then
+        echo 1 > "$CHG_CTRL"
+        PAUSE_90_DONE=1
+        MODE="PAUSE"
+        TIMER=$NOW
+        echo "⏸ Pause @90% $(date)" >> "$LOG"
+    fi
+
+    # ---- 95% milestone ----
+    if [ "$BATTERY" -ge 95 ] && [ "$BATTERY" -lt 100 ] && [ "$PAUSE_95_DONE" -eq 0 ]; then
+        echo 1 > "$CHG_CTRL"
+        PAUSE_95_DONE=1
+        MODE="PAUSE"
+        TIMER=$NOW
+        echo "⏸ Pause @95% $(date)" >> "$LOG"
+    fi
+
+    # ---- Resume after pause ----
+    if [ "$MODE" = "PAUSE" ] && [ $((NOW - TIMER)) -ge "$PAUSE_TIME" ]; then
+        echo 0 > "$CHG_CTRL"
+        MODE="NORMAL"
+        TIMER=0
+        echo "▶ Charging resumed $(date)" >> "$LOG"
     fi
 
     # ---- 100% hard stop ----
@@ -98,6 +107,9 @@ while true; do
 Battery: $BATTERY%
 Charging State: $STATUS
 Mode: $MODE
+80% Pause Done: $PAUSE_80_DONE
+90% Pause Done: $PAUSE_90_DONE
+95% Pause Done: $PAUSE_95_DONE
 Last Update: $(date)
 EOF
 
