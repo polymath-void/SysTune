@@ -1,40 +1,64 @@
 # SysTune Changelog
 
-## v3.0 – Current
-**Date:** 2025-12-31
+All notable changes to this project will be documented in this file.
 
-### Battery Safe (`battery_safe.sh`)
-- Revamped pause/resume logic for 80%, 90%, and 95% thresholds
-- Charging pause duration fixed to 5 minutes, with 1-minute UI sync between
-- Hard stop at 100% and automatic exit when charger unplugged
-- Improved state tracking (`MODE`, `TIMER`, `PAUSE_x_DONE`) for stability
-- Logs and status updated every 15 seconds without rapid on/off cycles
-
-### Auto Profile (`auto_profile.sh`)
-- Added robust automatic profile switching based on battery and system triggers
-- Profiles can be defined and stored in `$MODDIR/config/profile.conf`
-- Added status tracking in `$MODDIR/state/auto_profile.status`
-- Improved log formatting and timestamped entries in `$MODDIR/logs/auto_profile.log`
-
-### Terminal Monitor (`sys_monitor.sh`)
-- Real-time monitoring of module activity and system resources
-- Integrated with battery_safe and auto_profile for centralized logging
-- Displays CPU, memory, battery, and module process info in terminal
+The format follows a simplified semantic versioning model:
+- MAJOR.MINOR.PATCH
 
 ---
 
-## v2.0
-**Date:** 2025-11-25
-
-- Added pause logic at 90% in battery_safe
-- Introduced basic auto_profile module for automatic profile changes
-- Integrated simple logs and status files for module tracking
+## [Unreleased]
+- Ongoing improvements and internal refinements
 
 ---
 
-## v1.0
-**Date:** 2025-10-20
+## [v1.0.0] – Initial Release
+### Added
+- SysTune Magisk module base structure
+- Battery Safe charging controller (v1)
+- Auto Profile framework (CPU/GPU profile switching)
+- Background service initialization support
+- Logging and PID-based singleton protection
 
-- Initial release of battery_safe module
-- Basic charging pause at 80% with simple logging
-- Kernel-level charging control without framework abuse
+---
+
+## [v2.0.0] – Stability & Control Update
+### Improved
+- Battery Safe charging logic refined
+- Reduced aggressive charging toggles
+- Improved charger disconnect handling
+- Auto Profile reliability improvements
+- Safer service lifecycle handling
+
+### Fixed
+- Charging state not restoring on exit
+- Multiple instance spawning issues
+
+---
+
+## [v3.0.0] – Smart Charging & System Harmony
+### Added
+- Battery Safe v3 logic with multi-stage charging control (80/90/95/100)
+- Clean charging pause/resume strategy
+- Better compatibility with MTK devices
+- Improved logs and state tracking
+
+### Improved
+- Auto Profile behavior under long uptime
+- Reduced system pressure
+- More predictable service exits
+
+---
+
+## [v3.1.0] – Battery Gauge Sync & Low-Pressure Mode
+### Improved
+- Battery Safe post-full gauge synchronization logic
+- Reduced battery polling frequency
+- Cleaner charger disconnect handling
+- Long idle wait mode after charging completion
+
+### Fixed
+- Battery capacity desync after overnight charging
+- Repeated charging stop spam in logs
+
+---

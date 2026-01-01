@@ -1,8 +1,13 @@
 #!/system/bin/sh
 # ==========================================
-# MTK Battery Safe Charging Controller v3.0
+# MTK Battery Safe Charging Controller v3.2
 # Author: Rahman
-# Milestone-based, MTK-safe, UI-safe
+# Device tested: Nothing Phone 2a (MediaTek)
+#
+# Design goals:
+# - Stable, non-spamming, deterministic
+# - dumpsys battery = source of truth
+# - One-time actions, no oscillation
 # ==========================================
 
 MODDIR="/data/adb/modules/SysTune"
@@ -13,7 +18,9 @@ STATUS_FILE="$MODDIR/state/battery_safe.status"
 CHG_CTRL="/sys/devices/platform/soc/11280000.i2c/i2c-5/5-0034/11280000.i2c:mt6375@34:mtk_gauge/power_supply/battery/disable"
 
 CHECK_INTERVAL=15
-PAUSE_TIME=300   # 5 minutes pause at milestones
+PAUSE_TIME=300
+POST_FULL_WAIT=300
+IDLE_SLEEP=900
 
 # ---------- Safety ----------
 safe_exit() {
@@ -31,85 +38,102 @@ fi
 echo $$ > "$PIDFILE"
 
 mkdir -p "$MODDIR/logs" "$MODDIR/state"
-echo "⚡ Battery Safe v3 started $(date)" >> "$LOG"
+echo "⚡ Battery Safe v3.2 started $(date)" >> "$LOG"
 
 # ---------- State ----------
+MODE="NORMAL"
+
 PAUSE_80_DONE=0
 PAUSE_90_DONE=0
 PAUSE_95_DONE=0
+FULL_DONE=0
+GAUGE_SYNC_DONE=0
 
-MODE="NORMAL"
-TIMER=0
+# ---------- Helpers ----------
+capacity() {
+    cat /sys/class/power_supply/battery/capacity 2>/dev/null
+}
 
-# ---------- Loop ----------
+status_full() {
+    dumpsys battery | grep -q "status: 5"
+}
+
+charger_connected() {
+    dumpsys battery | grep -q "AC powered: true"
+}
+
+# ---------- Main Loop ----------
 while true; do
-    BATTERY=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
-    STATUS=$(cat /sys/class/power_supply/battery/status 2>/dev/null)
-    NOW=$(date +%s)
+    BAT=$(capacity)
 
-    # ---- Charger removed → exit safely ----
-    if [ "$STATUS" != "Charging" ]; then
+    # Charger removed → exit clean
+    if ! charger_connected; then
         echo "🔌 Charger disconnected $(date)" >> "$LOG"
         safe_exit
     fi
 
-    # ---- Always allow charging below 80% ----
-    if [ "$BATTERY" -lt 80 ]; then
-        echo 0 > "$CHG_CTRL"
-        MODE="NORMAL"
-        TIMER=0
-    fi
-
-    # ---- 80% milestone ----
-    if [ "$BATTERY" -ge 80 ] && [ "$BATTERY" -lt 90 ] && [ "$PAUSE_80_DONE" -eq 0 ]; then
+    # ---- 80% pause (once) ----
+    if [ "$BAT" -ge 80 ] && [ "$PAUSE_80_DONE" -eq 0 ]; then
         echo 1 > "$CHG_CTRL"
         PAUSE_80_DONE=1
-        MODE="PAUSE"
-        TIMER=$NOW
-        echo "⏸ Pause @80% $(date)" >> "$LOG"
+        sleep "$PAUSE_TIME"
+        echo 0 > "$CHG_CTRL"
+        echo "⏸ Pause @80% → resume $(date)" >> "$LOG"
     fi
 
-    # ---- 90% milestone ----
-    if [ "$BATTERY" -ge 90 ] && [ "$BATTERY" -lt 95 ] && [ "$PAUSE_90_DONE" -eq 0 ]; then
+    # ---- 90% pause (once) ----
+    if [ "$BAT" -ge 90 ] && [ "$PAUSE_90_DONE" -eq 0 ]; then
         echo 1 > "$CHG_CTRL"
         PAUSE_90_DONE=1
-        MODE="PAUSE"
-        TIMER=$NOW
-        echo "⏸ Pause @90% $(date)" >> "$LOG"
+        sleep "$PAUSE_TIME"
+        echo 0 > "$CHG_CTRL"
+        echo "⏸ Pause @90% → resume $(date)" >> "$LOG"
     fi
 
-    # ---- 95% milestone ----
-    if [ "$BATTERY" -ge 95 ] && [ "$BATTERY" -lt 100 ] && [ "$PAUSE_95_DONE" -eq 0 ]; then
+    # ---- 95% pause (once) ----
+    if [ "$BAT" -ge 95 ] && [ "$PAUSE_95_DONE" -eq 0 ]; then
         echo 1 > "$CHG_CTRL"
         PAUSE_95_DONE=1
-        MODE="PAUSE"
-        TIMER=$NOW
-        echo "⏸ Pause @95% $(date)" >> "$LOG"
-    fi
-
-    # ---- Resume after pause ----
-    if [ "$MODE" = "PAUSE" ] && [ $((NOW - TIMER)) -ge "$PAUSE_TIME" ]; then
+        sleep "$PAUSE_TIME"
         echo 0 > "$CHG_CTRL"
-        MODE="NORMAL"
-        TIMER=0
-        echo "▶ Charging resumed $(date)" >> "$LOG"
+        echo "⏸ Pause @95% → resume $(date)" >> "$LOG"
     fi
 
-    # ---- 100% hard stop ----
-    if [ "$BATTERY" -ge 100 ]; then
+    # ---- Full reached (once, authoritative) ----
+    if status_full && [ "$FULL_DONE" -eq 0 ]; then
         echo 1 > "$CHG_CTRL"
-        MODE="STOP"
-        echo "🛑 Charging stopped @100% $(date)" >> "$LOG"
+        FULL_DONE=1
+        MODE="POST_FULL"
+        echo "🛑 Charging complete (status=Full) $(date)" >> "$LOG"
+    fi
+
+    # ---- Post-full gauge sync (once) ----
+    if [ "$MODE" = "POST_FULL" ] && [ "$GAUGE_SYNC_DONE" -eq 0 ]; then
+        echo 0 > "$CHG_CTRL"
+        sleep "$POST_FULL_WAIT"
+
+        echo 1 > "$CHG_CTRL"
+        CAP_AFTER=$(capacity)
+
+        echo "🔁 Gauge sync check | capacity=$CAP_AFTER% $(date)" >> "$LOG"
+
+        if [ "$CAP_AFTER" -eq 100 ]; then
+            GAUGE_SYNC_DONE=1
+            MODE="IDLE"
+            echo "✅ Battery gauge stabilized (100%) $(date)" >> "$LOG"
+        fi
+    fi
+
+    # ---- Idle monitor (silent) ----
+    if [ "$MODE" = "IDLE" ]; then
+        sleep "$IDLE_SLEEP"
+        continue
     fi
 
     # ---- Status file ----
     cat <<EOF > "$STATUS_FILE"
-Battery: $BATTERY%
-Charging State: $STATUS
+Battery: $BAT%
 Mode: $MODE
-80% Pause Done: $PAUSE_80_DONE
-90% Pause Done: $PAUSE_90_DONE
-95% Pause Done: $PAUSE_95_DONE
 Last Update: $(date)
 EOF
 
