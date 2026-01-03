@@ -3,6 +3,12 @@
 Dedicated changelog for the Battery Safe charging controller.
 
 ---
+## v3.2 – Stable
+- Fixed repeated 100% stop spam
+- Reworked pause logic (one-time execution)
+- Post-full gauge sync stabilized
+- Silent idle monitoring mode
+- Safe charger disconnect handling
 
 ## [v3.1.0] – Post-Full Gauge Sync Update
 ### Added

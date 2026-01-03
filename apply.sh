@@ -108,4 +108,13 @@ game_mode)
 
 esac
 
+# ---------- PERF EFFICIENCY TWEAKS ----------
+PERF_TWEAKS="/data/adb/modules/SysTune/perf_efficiency.sh"
+if [ -f "$PERF_TWEAKS" ] && [ -x "$PERF_TWEAKS" ]; then
+    echo "[apply.sh] Applying perf efficiency tweaks for profile: $PROFILE"
+    sh "$PERF_TWEAKS" "$PROFILE"
+else
+    echo "[apply.sh] Perf efficiency script missing or not executable"
+fi
+
 exit 0
