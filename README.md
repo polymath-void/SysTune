@@ -18,8 +18,8 @@ SysTune consists of three main modules:
 
 2. **Auto Profile (`auto_profile.sh`)**  
    - Automatically switches Termux/system profiles based on battery level or custom triggers.  
-   - Profiles are defined in `$MODDIR/config/profile.conf`.  
-   - Status is tracked in `$MODDIR/state/auto_profile.status`.  
+   - Profiles are defined in `/data/adb/modules/SysTune/config/profile.conf`.  
+   - Status is tracked in `/data/adb/modules/SysTune/state/auto_profile.status`.  
 
 3. **Terminal Monitor (`sys_monitor.sh`)**  
    - Provides a live terminal-based dashboard showing CPU, memory, battery, and module activity.  
@@ -63,29 +63,29 @@ If you flashed the zip via KSU or Magisk, just relax rest of the things scripts 
 *Battery Safe*
 
 Bash
-su -c "$MODDIR/battery_safe.sh"
+su -c "/data/adb/modules/SysTune/battery_safe.sh"
 
 * Automatically starts when charger is connected.
 * Monitors battery every 15 seconds.
-* Pauses/resumes charging at 80%, 90%, 95%, and 100%.
+* Pauses/resumes charging at 80%, 90%, 95%, and resume till the charger connected.
 * Logs and status files:
-** $MODDIR/logs/battery_safe.log
-** $MODDIR/state/battery_safe.status
+** /data/adb/modules/SysTune/logs/battery_safe.log
+** /data/adb/modules/SysTune/state/battery_safe.status
 
 *Auto Profile*
 
 Bash
-su -c "$MODDIR/auto_profile.sh"
+su -c "/data/adb/modules/SysTune/auto_profile.sh"
 
 * Automatically switches profiles based on triggers.
 * Logs and status files:
-** $MODDIR/logs/auto_profile.log
-** $MODDIR/state/auto_profile.status
+** /data/adb/modules/SysTune/logs/auto_profile.log
+** /data/adb/modules/SysTune/state/auto_profile.status
 
 *Terminal Monitor*
 
 Bash
-su -c "$MODDIR/sys_monitor.sh"
+su -c "/data/adb/modules/SysTune/sys_monitor.sh"
 
 * Provides live system metrics and module status.
 * Useful for debugging and monitoring Battery Safe / Auto Profile activities.
