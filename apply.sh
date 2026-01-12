@@ -117,4 +117,13 @@ else
     echo "[apply.sh] Perf efficiency script missing or not executable"
 fi
 
+# ---------- RUNTIME OPTIMIZATION ----------
+RUNTIME_OPT="/data/adb/modules/SysTune/optimize_runtime.sh"
+if [ -f "$RUNTIME_OPT" ] && [ -x "$RUNTIME_OPT" ]; then
+    echo "[apply.sh] Applying runtime optimizations for profile: $PROFILE"
+    sh "$RUNTIME_OPT" "$PROFILE"
+else
+    echo "[apply.sh] Runtime optimization script missing or not executable"
+fi
+
 exit 0

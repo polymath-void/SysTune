@@ -1,90 +1,49 @@
 #!/system/bin/sh
-# ==========================================
-# SysTune Auto Profile Worker v2.0 (One-Shot)
-# Author: Rahman
-# Purpose: Decide → apply → update state → exit
-# ==========================================
+# SysTune Auto Profile Worker v3.1 (Atomic & Zero-Fork)
 
-SYS="/data/adb/modules/SysTune"
-PIDFILE="$SYS/auto_profile.pid"
-LOG="$SYS/logs/auto_profile.log"
+# Safety Fallback for standalone execution
+[ -z "$CUR_BAT" ] && CUR_BAT=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 50)
 STATUS_FILE="$SYS/state/auto_profile.status"
 APPLY="$SYS/apply.sh"
 
-mkdir -p "$SYS/logs" "$SYS/state"
-
-log() {
-    echo "[auto_profile] $(date) | $1" >> "$LOG"
-}
-
-# ---------- Singleton (short-lived) ----------
-if [ -f "$PIDFILE" ]; then
-    OLD_PID=$(cat "$PIDFILE" 2>/dev/null)
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        log "Another instance running (PID=$OLD_PID), exiting"
-        exit 0
-    fi
-fi
-echo $$ > "$PIDFILE"
-
-cleanup() {
-    rm -f "$PIDFILE"
-}
-trap cleanup EXIT INT TERM
-
-log "Worker started (PID=$$)"
-
-# ---------- Read battery ----------
-BATTERY=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
-[ -z "$BATTERY" ] && {
-    log "Battery read failed, exiting"
-    exit 1
-}
-
-# ---------- CPU load ----------
-CPU_LOAD=$(awk '/^cpu / {u=($2+$4)*100/($2+$4+$5); printf "%.0f\n",u}' /proc/stat 2>/dev/null)
-[ -z "$CPU_LOAD" ] && CPU_LOAD=0
-
-# ---------- Decide profile ----------
-if [ "$BATTERY" -le 30 ]; then
+# 1. Zone Decision Logic
+if [ "$CUR_BAT" -le 30 ]; then
     NEW_PROFILE="battery_saver"
-elif [ "$BATTERY" -gt 81 ]; then
+elif [ "$CUR_BAT" -ge 81 ]; then
     NEW_PROFILE="performance"
-elif [ "$BATTERY" -le 80 ]; then
-    NEW_PROFILE="balanced_smooth"
 else
     NEW_PROFILE="balanced_smooth"
 fi
 
-# ---------- Read last applied profile ----------
+# 2. Read Last Profile (Pure Shell)
 LAST_PROFILE=""
 if [ -f "$STATUS_FILE" ]; then
-    LAST_PROFILE=$(awk -F': ' '/^Profile:/ {print $2}' "$STATUS_FILE")
+    while read -r line; do
+        case "$line" in
+            Profile:*) LAST_PROFILE=${line#Profile:[[:space:]]} ;;
+        esac
+    done < "$STATUS_FILE"
 fi
 
-# ---------- Apply if needed ----------
-if [ "$NEW_PROFILE" = "$LAST_PROFILE" ]; then
-    log "No change (profile=$NEW_PROFILE)"
-    exit 0
-fi
+# 3. Exit early if no transition is needed
+[ "$NEW_PROFILE" = "$LAST_PROFILE" ] && return 0
 
-if [ ! -x "$APPLY" ]; then
-    log "apply.sh missing or not executable"
-    exit 1
-fi
-
-log "Applying profile: $NEW_PROFILE (Battery=$BATTERY%, CPU=$CPU_LOAD%)"
-sh "$APPLY" "$NEW_PROFILE"
-
-# ---------- Update state ----------
-cat <<EOF > "$STATUS_FILE"
+# 4. Apply Profile
+if [ -x "$APPLY" ]; then
+    echo "[$(date '+%H:%M:%S')] Transition: ${LAST_PROFILE:-INIT} -> $NEW_PROFILE" >> "$SYS/logs/service.log"
+    
+    # Sourcing apply.sh for maximum speed
+    . "$APPLY" "$NEW_PROFILE"
+    
+    # 5. Atomic State Update (Prevents corruption during sudden power-off)
+    TMP_STAT="$STATUS_FILE.tmp"
+    cat <<EOF > "$TMP_STAT"
 Profile: $NEW_PROFILE
-Battery: $BATTERY%
-CPU Load: $CPU_LOAD%
-Last Change: $(date)
+Battery: $CUR_BAT%
+Status: $CUR_STAT
+Timestamp: $(date +%s)
 EOF
+    mv "$TMP_STAT" "$STATUS_FILE"
+fi
 
-log "Profile applied successfully: $NEW_PROFILE"
-
-
-exit 0
+return 0

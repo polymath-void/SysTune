@@ -1,114 +1,81 @@
 #!/system/bin/sh
 # =================================================================
-# MTK Battery Safe Charging Controller v3.7
-# Fixed: Infinite relaunch loop & Log noise
+# SysTune - Battery Safe Worker v4.1 (Production Grade)
 # =================================================================
 
-MODDIR="/data/adb/modules/SysTune"
-PIDFILE="$MODDIR/battery_safe.pid"
-LOG="$MODDIR/logs/battery_safe.log"
+# 1. Environment & Fallbacks
+[ -z "$SYS" ] && SYS="/data/adb/modules/SysTune"
+[ -z "$CUR_BAT" ] && CUR_BAT=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 50)
+STATE_FILE="$SYS/state/battery_safe.state"
+LOG="$SYS/logs/battery_safe.log"
+
 CHG_LIMIT="/sys/class/power_supply/mtk-master-charger/input_current_limit"
 TEMP_NODE="/sys/class/power_supply/battery/temp"
-CAP_NODE="/sys/class/power_supply/battery/capacity"
+TEMP_LIMIT=430    # 43.0°C
+HYSTERESIS=15     # 1.5°C (Resume at 41.5°C)
 
-PAUSE_TIME=300
-TEMP_LIMIT=430 
-ORIG_LIMIT="$(cat "$CHG_LIMIT" 2>/dev/null || echo 3200000)"
+# 2. State Loading
+[ -f "$STATE_FILE" ] && . "$STATE_FILE"
+: "${PAUSE_80:=0}" "${PAUSE_90:=0}" "${PAUSE_95:=0}" "${THERMAL_ACTIVE:=0}"
 
-# --- Improved Logging (Prevents duplicate spam) ---
-last_log=""
-log() { 
-    if [ "$1" != "$last_log" ]; then
-        echo "$(date '+%F %T') | $1" >> "$LOG"
-        last_log="$1"
-    fi
+log_chg() {
+    read -r up rest < /proc/uptime
+    echo "${up%%.*}s | $1" >> "$LOG"
 }
 
-charger_connected() {
-    # Specifically check USB/AC online status
-    grep -q "1" /sys/class/power_supply/*/online 2>/dev/null
-}
 
 set_charging() {
+    [ -w "$CHG_LIMIT" ] || return 1
     if [ "$1" = "off" ]; then
         echo 0 > "$CHG_LIMIT"
     else
-        echo "$ORIG_LIMIT" > "$CHG_LIMIT"
+        # MTK Default Limit
+        echo 3200000 > "$CHG_LIMIT"
     fi
 }
 
-# Cleanup only on actual system shutdown/manual stop
-cleanup() {
-    set_charging on
-    rm -f "$PIDFILE"
-    log "🛑 Service Stopped"
-    exit 0
-}
-trap cleanup INT TERM
-
-# --- Singleton ---
-if [ -f "$PIDFILE" ]; then
-    read -r OLD_PID < "$PIDFILE"
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        exit 0
-    fi
+# 3. Thermal Logic with Hysteresis
+# Pure shell reads (Zero-Fork)
+read -r TEMP < "$TEMP_NODE" 2>/dev/null || TEMP=0
+if [ "$TEMP" -gt "$TEMP_LIMIT" ]; then
+    set_charging off
+    [ "$THERMAL_ACTIVE" -eq 0 ] && log_chg "ALERT: THERMAL LIMIT REACHED ($((TEMP/10))C)"
+    THERMAL_ACTIVE=1
+elif [ "$THERMAL_ACTIVE" -eq 1 ] && [ "$TEMP" -lt $((TEMP_LIMIT - HYSTERESIS)) ]; then
+    log_chg "INFO: THERMAL NORMALIZED ($((TEMP/10))C)"
+    THERMAL_ACTIVE=0
 fi
-echo $$ > "$PIDFILE"
 
-log "⚡ Battery Safe v3.7 started"
+# Exit early if thermal guard is still holding the line
+[ "$THERMAL_ACTIVE" -eq 1 ] && goto_persist
 
-PAUSE_80=0; PAUSE_90=0; PAUSE_95=0
+# 4. Capacity-Based Pausing (Deterministic If-Elif)
+if [ "$CUR_BAT" -ge 95 ] && [ "$PAUSE_95" -eq 0 ]; then
+    set_charging off
+    log_chg "PAUSE: 95% REACHED"
+    PAUSE_95=1
+elif [ "$CUR_BAT" -ge 90 ] && [ "$PAUSE_90" -eq 0 ]; then
+    set_charging off
+    log_chg "PAUSE: 90% REACHED"
+    PAUSE_90=1
+elif [ "$CUR_BAT" -ge 80 ] && [ "$PAUSE_80" -eq 0 ]; then
+    set_charging off
+    log_chg "PAUSE: 80% REACHED"
+    PAUSE_80=1
+elif [ "$PAUSE_80" -eq 0 ] && [ "$PAUSE_90" -eq 0 ] && [ "$PAUSE_95" -eq 0 ]; then
+    # Only ensure ON if no safety pauses have been triggered yet
+    set_charging on
+fi
 
-while true; do
-    # --- Dormant Logic ---
-    if ! charger_connected; then
-        # Reset states for next plug-in
-        if [ "$PAUSE_80" -ne 0 ] || [ "$PAUSE_90" -ne 0 ]; then
-            log "🔌 Charger removed - Resetting triggers"
-            PAUSE_80=0; PAUSE_90=0; PAUSE_95=0
-            set_charging on
-        fi
-        # Long sleep to save CPU when not charging
-        sleep 60
-        continue
-    fi
-
-    BAT="$(cat "$CAP_NODE" 2>/dev/null || echo 0)"
-    TEMP="$(cat "$TEMP_NODE" 2>/dev/null || echo 0)"
-
-    # Thermal guard
-    if [ "$TEMP" -gt "$TEMP_LIMIT" ]; then
-        set_charging off
-        log "🔥 Thermal guard active: $((TEMP/10))C"
-        sleep 60
-        continue
-    fi
-
-    # Logic Sequence
-    if [ "$BAT" -ge 95 ] && [ "$PAUSE_95" -eq 0 ]; then
-        set_charging off
-        log "⏸ Pause @95% - Final"
-        sleep "$PAUSE_TIME"
-        set_charging on
-        PAUSE_95=1
-        # Instead of exit, we just wait for unplug
-        log "✅ Cycle complete. Waiting for unplug."
-        while charger_connected; do sleep 60; done
-    
-    elif [ "$BAT" -ge 90 ] && [ "$PAUSE_90" -eq 0 ]; then
-        set_charging off
-        log "⏸ Pause @90%"
-        sleep "$PAUSE_TIME"
-        set_charging on
-        PAUSE_90=1
-    
-    elif [ "$BAT" -ge 80 ] && [ "$PAUSE_80" -eq 0 ]; then
-        set_charging off
-        log "⏸ Pause @80%"
-        sleep "$PAUSE_TIME"
-        set_charging on
-        PAUSE_80=1
-    fi
-
-    sleep 30
-done
+# 5. Atomic State Persist
+goto_persist() {
+    TMP="$STATE_FILE.tmp"
+    {
+        echo "PAUSE_80=$PAUSE_80"
+        echo "PAUSE_90=$PAUSE_90"
+        echo "PAUSE_95=$PAUSE_95"
+        echo "THERMAL_ACTIVE=$THERMAL_ACTIVE"
+    } > "$TMP"
+    mv "$TMP" "$STATE_FILE"
+}
+goto_persist

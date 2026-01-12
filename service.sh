@@ -1,58 +1,66 @@
 #!/system/bin/sh
-# ==========================================================
-# SysTune Service Scheduler v2.0 (Reactive Polling)
-# ==========================================================
+# SysTune - Production Service v4.2
 
-MODDIR=${0%/*}
-LOG="$MODDIR/logs/service.log"
-STATE="$MODDIR/state"
+# 1. Delay to ensure system is fully booted
+sleep 30
 
-mkdir -p "$MODDIR/logs" "$STATE"
-chmod 755 "$MODDIR/"*.sh
+MODDIR="/data/adb/modules/SysTune"
+# Set highest priority (Real-time / High Priority)
+# Replace this
+# renice -n -20 -p $$
+# ionice -c 1 -n 0 -p $$
 
-log() { echo "[service] $(date '+%F %T') | $1" >> "$LOG"; }
+# With this
+renice -n 10 -p $$
+ionice -c 2 -n 7 -p $$ 2>/dev/null
 
-LAST_STATUS=""
-LAST_PROFILE=""
-POLL_INTERVAL=30 # Dynamic interval
+# Export variables for sourced worker
+export SYS="$MODDIR"
+export STATE="$SYS/state"
+export BAT_CAP="/sys/class/power_supply/battery/capacity"
+export BAT_STAT="/sys/class/power_supply/battery/status"
 
-log "Service started (Reactive Mode)"
+# Reset state on boot to ensure fresh application
+rm -f "$STATE/auto_profile.status"
+LAST_ZONE="-1"
+LAST_STAT=""
+
+get_zone() {
+    local cap=$1
+    if [ "$cap" -le 30 ]; then echo 0; elif [ "$cap" -le 80 ]; then echo 1; else echo 2; fi
+}
+
+# The Zero-Fork Loop
+# ... initialization block ...
 
 while true; do
-    LEVEL=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null)
-    STATUS=$(cat /sys/class/power_supply/battery/status 2>/dev/null)
+	# Pure shell reads (Zero-Fork)
+	read -r CUR_BAT < "$BAT_CAP" 2>/dev/null || CUR_BAT=50
+	read -r CUR_STAT < "$BAT_STAT" 2>/dev/null || CUR_STAT="Discharging"
+	
+    CUR_ZONE=$(get_zone "$CUR_BAT")
 
-    # 1. Profile Management (Logic inside auto_profile.sh)
-    sh "$MODDIR/auto_profile.sh"
+    # Event Trigger: Change in Zone or Power Status
+    if [ "$CUR_ZONE" != "$LAST_ZONE" ] || [ "$CUR_STAT" != "$LAST_STAT" ]; then
+        . "$SYS/auto_profile.sh"
 
-    # Detect profile changes for logging
-    PROFILE_FILE="$STATE/auto_profile.status"
-    if [ -f "$PROFILE_FILE" ]; then
-        CUR_PROFILE=$(awk -F': ' '/^Profile:/ {print $2}' "$PROFILE_FILE")
-        if [ "$CUR_PROFILE" != "$LAST_PROFILE" ]; then
-            log "Profile: $CUR_PROFILE (Bat: ${LEVEL}%)"
-            LAST_PROFILE="$CUR_PROFILE"
+        # On Unplug: Reset Charging Hardware & Safety State
+        if [ "$CUR_STAT" != "Charging" ]; then
+            [ -w /sys/class/power_supply/mtk-master-charger/input_current_limit ] && \
+                echo 3200000 > /sys/class/power_supply/mtk-master-charger/input_current_limit
+            rm -f "$STATE/battery_safe.state"
         fi
+
+        LAST_ZONE="$CUR_ZONE"
+        LAST_STAT="$CUR_STAT"
     fi
 
-    # 2. Charging Logic: battery_safe.sh
-    if [ "$STATUS" = "Charging" ]; then
-        POLL_INTERVAL=60 # Check every minute while charging
-        if [ ! -f "$STATE/battery_safe.pid" ] || ! kill -0 "$(cat "$STATE/battery_safe.pid")" 2>/dev/null; then
-            sh "$MODDIR/battery_safe.sh" &
-            echo $! > "$STATE/battery_safe.pid"
-            log "battery_safe started"
-        fi
+    # While Charging: Run worker every 60s
+    if [ "$CUR_STAT" = "Charging" ]; then
+        . "$SYS/battery_safe.sh"
+        sleep 60
     else
-        POLL_INTERVAL=1800 # Deep sleep (30 min) when discharging
-        # Clean up if charger was just pulled
-        if [ -f "$STATE/battery_safe.pid" ]; then
-            kill "$(cat "$STATE/battery_safe.pid")" 2>/dev/null
-            rm -f "$STATE/battery_safe.pid"
-            log "battery_safe stopped (unplugged)"
-        fi
+        sleep 120
     fi
-
-    LAST_STATUS="$STATUS"
-    sleep "$POLL_INTERVAL"
 done
+
