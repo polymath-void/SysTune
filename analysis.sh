@@ -1,54 +1,48 @@
 #!/system/bin/sh
-# SysTune Diagnostic & Verification Tool (v1.0)
+# SysTune Diagnostic v3.0 - Full Stack Auditor
 
-SYS="/data/adb/modules/SysTune"
-STATUS_FILE="$SYS/state/auto_profile.status"
-LOG_FILE="$SYS/logs/service.log"
+MODDIR="/data/adb/modules/SysTune"
+LOG_DIR="$MODDIR/logs"
+STATE_DIR="$MODDIR/state"
 
-header() { echo "\n\033[1;34m=== $1 ===\033[0m"; }
-check_node() {
-    if [ -w "$1" ]; then
-        echo "[\033[0;32m OK \033[0m] $1 = $(cat "$1")"
-    else
-        echo "[\033[0;31m FAIL \033[0m] $1 (Not writable or missing)"
-    fi
-}
+# 1. Header & Daemon Logic
+echo "------------------------------------------"
+echo "SysTune Polymath Diagnostic | $(date '+%H:%M:%S')"
+echo "------------------------------------------"
 
-# 1. Check Service Heartbeat
-header "SERVICE STATUS"
-PID=$(pgrep -f "service.sh")
+PID=$(pgrep -f "service.sh --daemon" | head -n1)
 if [ -n "$PID" ]; then
-    echo "Service running on PID: $PID"
+    OOM=$(cat /proc/$PID/oom_score_adj 2>/dev/null)
+    [ "$OOM" -eq -500 ] && OOM_TYPE="GLOBAL" || OOM_TYPE="SANDBOXED"
+    echo "[ DAEMON ] Status: RUNNING | PID: $PID | OOM: $OOM ($OOM_TYPE)"
 else
-    echo "Service NOT running. Start with: su -c \"sh $SYS/service.sh &\""
+    echo "[ DAEMON ] Status: NOT RUNNING"
 fi
 
-# 2. Verify Atomic State
-header "CURRENT STATE (Atomic Status File)"
-if [ -f "$STATUS_FILE" ]; then
-    cat "$STATUS_FILE"
+# 2. Performance & Battery State
+echo "[ PERF   ] $([ -f "$STATE_DIR/auto_profile.status" ] && head -n1 "$STATE_DIR/auto_profile.status" || echo "No State")"
+
+CHG_LIMIT="/sys/class/power_supply/mtk-master-charger/input_current_limit"
+CUR_LIM=$(cat "$CHG_LIMIT" 2>/dev/null || echo "0")
+echo "[ CHARGE ] Hardware Limit: $((CUR_LIM/1000))mA"
+
+# 3. Log Extraction (The "Where is log?" Fix)
+echo "\n--- RECENT SERVICE LOGS (Last 5) ---"
+if [ -f "$LOG_DIR/service.log" ]; then
+    tail -n 5 "$LOG_DIR/service.log"
 else
-    echo "No status file found. Threshold not yet crossed."
+    echo "service.log not found at $LOG_DIR"
 fi
 
-# 3. Kernel Node Verification (MTK Specific)
-header "KERNEL CONFIGURATION"
-for policy in /sys/devices/system/cpu/cpufreq/policy*; do
-    check_node "$policy/scaling_governor"
-    [ -d "$policy/schedutil" ] && check_node "$policy/schedutil/rate_limit_us"
-done
-
-
-
-# 4. Check for Socket Storm (The problem we solved earlier)
-header "NETWORK SOCKET HEALTH"
-STORM_COUNT=$(su -c "netstat -ntp | grep -E 'LAST_ACK|FIN_WAIT' | wc -l")
-if [ "$STORM_COUNT" -gt 5 ]; then
-    echo "[\033[0;33m WARN \033[0m] $STORM_COUNT sockets in hanging state. Try Airplane Mode toggle."
+echo "\n--- RECENT BATTERY LOGS (Last 5) ---"
+if [ -f "$LOG_DIR/battery_safe.log" ]; then
+    tail -n 5 "$LOG_DIR/battery_safe.log"
 else
-    echo "[\033[0;32m CLEAN \033[0m] No socket storm detected."
+    echo "battery_safe.log not found at $LOG_DIR"
 fi
+echo "------------------------------------------"
 
-# 5. Recent Transitions
-header "RECENT LOG ENTRIES"
-tail -n 5 "$LOG_FILE" 2>/dev/null
+if [ -f "/data/adb/modules/SysTune/state/battery_safe.state" ]; then
+    . "/data/adb/modules/SysTune/state/battery_safe.state"
+    echo "[ BATT   ] $STATUS ($STEP) | Remaining: ${TIME_LEFT:-0}s"
+fi
