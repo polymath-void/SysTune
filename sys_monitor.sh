@@ -1,11 +1,10 @@
 #!/system/bin/sh
 # ==========================================
-# SysTune Monitor v2.0
+# SysTune Monitor v3.0 - Interactive Dashboard
 # Integrated system & auto_profile dashboard
-# Author: Rahman
 # ==========================================
 
-REFRESH=5
+REFRESH=3
 CPU_PATH="/sys/devices/system/cpu"
 GPU_PATH="/sys/class/devfreq/13000000.mali"
 SYS="/data/adb/modules/SysTune"
@@ -17,7 +16,7 @@ read_file() { [ -f "$1" ] && cat "$1" 2>/dev/null; }
 hz_to_ghz() { awk "BEGIN{printf \"%.2f\", $1/1000000}"; }
 hz_to_mhz() { awk "BEGIN{printf \"%.0f\", $1/1000}"; }
 
-# ---------- CPU ----------
+# ---------- Hardware Info ----------
 cpu_gov() { read_file "$CPU_PATH/cpu0/cpufreq/scaling_governor"; }
 
 cpu_avg_freq() {
@@ -33,23 +32,17 @@ cpu_load() {
     awk '/^cpu / {u=($2+$4)*100/($2+$4+$5); printf "%.0f",u}' /proc/stat
 }
 
-# ---------- GPU ----------
 gpu_gov() { read_file "$GPU_PATH/governor"; }
 gpu_cur() { hz_to_mhz "$(read_file "$GPU_PATH/cur_freq")"; }
 gpu_max() { hz_to_mhz "$(read_file "$GPU_PATH/max_freq")"; }
 
-# ---------- Memory ----------
 mem_used() {
     awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END{printf "%.1f", (t-a)/1024/1024}' /proc/meminfo
 }
 mem_free() {
     awk '/MemAvailable/ {printf "%.1f", $2/1024/1024}' /proc/meminfo
 }
-swap_used() {
-    awk '/SwapTotal/ {t=$2} /SwapFree/ {f=$2} END{printf "%.1f / %.1f", (t-f)/1024/1024, t/1024/1024}' /proc/meminfo
-}
 
-# ---------- Battery ----------
 bat_lvl() { read_file /sys/class/power_supply/battery/capacity; }
 bat_stat() { read_file /sys/class/power_supply/battery/status; }
 bat_temp() {
@@ -59,7 +52,6 @@ bat_temp() {
     done
 }
 
-# ---------- Thermal ----------
 thermal_avg() {
     awk '
     {
@@ -69,74 +61,95 @@ thermal_avg() {
     }
     END {
         if (count>0) printf "%.1f", sum/count/1000
-    }' $(grep -l "cpu" /sys/class/thermal/thermal_zone*/type)
+    }' $(grep -l "cpu" /sys/class/thermal/thermal_zone*/type 2>/dev/null)
 }
 
-gpu_temp() {
-    for z in /sys/class/thermal/thermal_zone*; do
-        type=$(read_file "$z/type")
-        [ "$type" = "gpu1" ] && awk '{printf "%.1f",$1/1000}' "$z/temp"
-    done
-}
-
-# ---------- Auto Profile ----------
 ap_status() {
     if [ -f "$STATUS_FILE" ]; then
-        read_file "$STATUS_FILE"
+        head -n 1 "$STATUS_FILE" | cut -d' ' -f2
     else
-        echo "Auto Profile: Not running"
+        echo "Not running"
     fi
 }
 
-# ---------- UI ----------
-box() {
-    title="$1"; l1="$2"; l2="$3"; l3="$4"
-    printf "┌──────── %-12s ────────┐\n" "$title"
-    printf "│ %-22s │\n" "$l1"
-    printf "│ %-22s │\n" "$l2"
-    printf "│ %-22s │\n" "$l3"
-    printf "└────────────────────────┘\n"
+# ---------- UI & Input ----------
+msg=""
+
+apply_profile() {
+    export NEW_PROFILE="$1"
+    export CUR_BAT="$(bat_lvl)"
+    export CUR_STAT="$(bat_stat)"
+    . "$SYS/auto_profile.sh"
+    msg="Profile changed to $1"
 }
 
-# ---------- main loop ----------
+# main loop
 while true; do
     clear
+    printf "\033[1;36m=== SysTune Interactive Dashboard ===\033[0m\n\n"
 
-    box "DEVICE" \
-        "Kernel: $(uname -r)" \
-        "Arch: $(uname -m)" \
-        "Cores: $(nproc)"
+    # Row 1
+    printf "\033[1;33m[ CPU ]\033[0m                   \033[1;33m[ GPU ]\033[0m\n"
+    printf "Gov:  %-15s   Gov:  %-15s\n" "$(cpu_gov)" "$(gpu_gov)"
+    printf "Load: %-15s   Cur:  %-15s\n" "$(cpu_load)%" "$(gpu_cur) MHz"
+    printf "Avg:  %-15s   Max:  %-15s\n" "$(cpu_avg_freq) GHz" "$(gpu_max) MHz"
+    echo ""
 
-    box "CPU" \
-        "Gov: $(cpu_gov)" \
-        "Avg: $(cpu_avg_freq) GHz" \
-        "Load: $(cpu_load)%"
+    # Row 2
+    printf "\033[1;32m[ MEMORY ]\033[0m                \033[1;32m[ BATTERY ]\033[0m\n"
+    printf "Used: %-15s   Level:  %-15s\n" "$(mem_used) GB" "$(bat_lvl)%"
+    printf "Free: %-15s   Status: %-15s\n" "$(mem_free) GB" "$(bat_stat)"
+    printf "                        Temp:   %-15s\n" "$(bat_temp)°C"
+    echo ""
 
-    box "GPU" \
-        "Gov: $(gpu_gov)" \
-        "Cur: $(gpu_cur) MHz" \
-        "Max: $(gpu_max) MHz"
+    # Row 3
+    printf "\033[1;35m[ SYSTEM STATE ]\033[0m\n"
+    printf "Active Profile: \033[1;37m%-15s\033[0m\n" "$(ap_status)"
+    printf "CPU Avg Temp:   %-15s\n" "$(thermal_avg)°C"
+    echo ""
 
-    box "MEMORY" \
-        "Used: $(mem_used) GB" \
-        "Free: $(mem_free) GB" \
-        "Swap: $(swap_used) GB"
+    # Actions Box
+    printf "\033[1;34m┌─────────────────────────────────────────┐\033[0m\n"
+    printf "\033[1;34m│\033[0m \033[1;37mINSTANT ACTIONS\033[0m                         \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [1] Force Battery Saver                   \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [2] Force Balanced Smooth                 \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [3] Force Performance                     \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [4] Drop RAM Caches (Clear Memory)        \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [5] Restart SysTune Daemon                \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m                                         \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [R] Refresh Dashboard       [Q] Quit      \033[1;34m│\033[0m\n"
+    printf "\033[1;34m└─────────────────────────────────────────┘\033[0m\n"
 
-    box "BATTERY" \
-        "Level: $(bat_lvl)%" \
-        "Status: $(bat_stat)" \
-        "Temp: $(bat_temp)°C"
+    # Message popup
+    if [ -n "$msg" ]; then
+        printf "\n\033[1;32m=> $msg\033[0m\n"
+        msg=""
+    else
+        echo ""
+    fi
 
-    box "THERMAL" \
-        "CPU Avg: $(thermal_avg)°C" \
-        "GPU: $(gpu_temp)°C" \
-        "State: Normal"
-
-    box "AUTO PROFILE" \
-        "$(ap_status)" \
-        "" \
-        "[R] Refresh | [Q] Quit"
-
+    # Read input with timeout
     read -t "$REFRESH" -n 1 key
-    [ "$key" = "q" ] && exit
+
+    case "$key" in
+        1) apply_profile "battery_saver" ;;
+        2) apply_profile "balanced_smooth" ;;
+        3) apply_profile "performance" ;;
+        4) 
+            echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+            msg="RAM Caches Dropped!"
+            ;;
+        5) 
+            pkill -f orchestrator
+            sh "$SYS/service.sh"
+            msg="Daemon Restarted!"
+            ;;
+        q|Q) 
+            clear
+            exit 0 
+            ;;
+        r|R) 
+            msg="Refreshed."
+            ;;
+    esac
 done
