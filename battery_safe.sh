@@ -91,5 +91,5 @@ fi
 {
     echo "STATUS=\"$TAG\""
     echo "STEP=\"$CAP%\""
-    echo "TIME_LEFT=\"$REMAINING\""
+    echo "TIME_LEFT=\"N/A\""
 } > "$STATE_DIR/battery_safe.state"

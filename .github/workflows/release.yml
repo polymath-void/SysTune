@@ -1,0 +1,60 @@
+name: Release Magisk Module
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build Orchestrator Binary
+        run: |
+          cd orchestrator
+          cross build --target aarch64-linux-android --release
+
+      - name: Package Magisk Module
+        run: |
+          mkdir -p SysTune_Release/orchestrator/target/release
+          # Copy the built aarch64 binary
+          cp orchestrator/target/aarch64-linux-android/release/orchestrator SysTune_Release/orchestrator/target/release/
+          
+          # Copy module files
+          cp *.sh SysTune_Release/
+          cp *.md SysTune_Release/
+          cp module.prop SysTune_Release/
+          cp -r config SysTune_Release/
+          
+          cd SysTune_Release
+          zip -r9 ../SysTune-release.zip .
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SysTune-Magisk-Module
+          path: SysTune-release.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SysTune-release.zip
+          name: SysTune Event-Driven Release
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
