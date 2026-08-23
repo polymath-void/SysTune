@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=1.2
-versionCode=3
+version=3.1
+versionCode=31
 author=RahmanShuvo
-description=Advanced CPU/GPU/Battery profile manager with AI auto-switching and min/max freq
+description=Advanced Event-Driven Magisk Optimizer (Rust Daemon, Battery Save, Smart Profiles)
