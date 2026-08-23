@@ -70,7 +70,7 @@ esac
 
 # --- 6. ATOMIC LOGGING & PERSISTENCE ---
 TIMESTAMP=$(date '+%H:%M:%S')
-echo "[$TIMESTAMP] State: $CURRENT_ID | Syn: $SYN_RET | Cong: $TCP_CONG" >> "$LOG_FILE"
+[ "${ENABLE_LOGGING:-0}" = "1" ] && echo "[$TIMESTAMP] State: $CURRENT_ID | Syn: $SYN_RET | Cong: $TCP_CONG" >> "$LOG_FILE"
 
 # Atomic move to prevent state corruption
 echo "$CURRENT_ID" > "$LAST_ID_FILE.tmp"

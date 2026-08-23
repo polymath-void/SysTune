@@ -12,7 +12,7 @@ LOG="$SYS/logs/optimize_runtime.log"
 mkdir -p "$SYS/logs"
 
 log() {
-    echo "[optimize] $(date '+%H:%M:%S') | $1" >> "$LOG"
+    [ "${ENABLE_LOGGING:-0}" = "1" ] && echo "[optimize] $(date '+%H:%M:%S') | $1" >> "$LOG"
 }
 
 log "Applying runtime optimizations for profile: $PROFILE"

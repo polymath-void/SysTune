@@ -12,7 +12,7 @@ LOG="$LOGDIR/perf_efficiency.log"
 mkdir -p "$LOGDIR"
 
 log() {
-    echo "[$(date '+%H:%M:%S')] $1" >> "$LOG"
+    [ "${ENABLE_LOGGING:-0}" = "1" ] && echo "[$(date '+%H:%M:%S')] $1" >> "$LOG"
 }
 
 log "===== Applying MTK Perf Efficiency: $PROFILE ====="

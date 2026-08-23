@@ -57,4 +57,4 @@ esac
 echo "$NEW_PROFILE" > "$LAST_PROFILE_FILE"
 chmod 644 "$STATE" "$LAST_PROFILE_FILE"
 
-echo "[$(date '+%H:%M:%S')] Applied $NEW_PROFILE at ${CUR_BAT}%" >> "$LOG"
+[ "${ENABLE_LOGGING:-0}" = "1" ] && echo "[$(date '+%H:%M:%S')] Applied $NEW_PROFILE at ${CUR_BAT}%" >> "$LOG"
