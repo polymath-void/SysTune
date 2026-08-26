@@ -1,8 +1,8 @@
-# SysTune (Monolith Edition)
+# SysTune (Neural Monolith Edition)
 
 SysTune is an ultra-advanced, **100% Native Rust**, event-driven kernel orchestrator for Android (KernelSU/Magisk).
 
-Designed for peak competition-grade performance and absolute zero-overhead battery efficiency, SysTune bypasses standard Android bash scripting to manipulate the Linux kernel `/sys/` and `/proc/` hardware nodes natively.
+Designed for peak competition-grade performance and absolute zero-overhead battery efficiency, SysTune bypasses standard Android bash scripting to manipulate the Linux kernel `/sys/` and `/proc/` hardware nodes natively. It features **Neural Executors**, derived directly from AI execution logs, to intelligently throttle, nuke, or restructure background tasks based on real-time hardware telemetry.
 
 ## The Architecture
 SysTune listens directly to kernel `AF_NETLINK` uevents (Hardware interrupt broadcasts) while consuming **0% CPU** in the background.
@@ -16,7 +16,8 @@ Traditional Android modules rely on heavy bash `for` loops and `awk`/`sed` strin
 - **Microsecond Iterators:** Pure Rust `fs::read_dir` is used to tune CPU scaling policies and timer_slack limits at blinding speeds.
 
 ## Core Features
-- **Energy Aware Scheduling (EAS):** Dynamically scales `schedutil` and `sugov_ext` CPU limits.
+- **Neural Executors:** Embedded AI-driven dataset logic dynamically scales CPU mitigations (`renice 10` -> `renice 19` -> `kill -9`) based on the severity of thermal spikes in real-time.
+- **Energy Aware Scheduling (EAS):** Dynamically scales `schedutil` and `sugov_ext` CPU limits via pure memory profiles.
 - **UClamp Task Pinning:** Precisely pins foreground apps to heavy cores and background tasks to efficiency cores.
 - **MediaTek FPSGO Tuning:** Natively hooks into the MTK FBT/TA limits.
 - **Smart Battery Protection:** Safely scales constant-current (CC) charging rates, applies strict thermal throttling, and fully halts charging at 85% to preserve battery longevity.
