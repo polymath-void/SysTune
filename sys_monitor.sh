@@ -84,12 +84,8 @@ logging_status() {
 msg=""
 
 apply_profile() {
-    if [ -f "$SYS/orchestrator_bin" ]; then
-        "$SYS/orchestrator_bin" --apply "$1"
-    else
-        "$SYS/orchestrator/target/release/orchestrator" --apply "$1"
-    fi
-    msg="Profile changed to $1 (via Rust Engine)"
+    echo "$1" > "$SYS/state/manual_profile"
+    msg="Profile changed to $1 (Daemon will sync shortly)"
 }
 
 # main loop

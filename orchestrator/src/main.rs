@@ -75,24 +75,25 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
     if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(temp) = temp_str.trim().parse::<i32>() {
             if temp >= cfg.neural_therm_threshold {
-                state.last_thermal_action_ts = now;
                 if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
                     let top_out = String::from_utf8_lossy(&output.stdout);
                     for line in top_out.lines() {
                         if line.contains(" 9") && line.contains(".") || line.contains("100.") {
                             if let Some(pid_str) = line.split_whitespace().next() {
-                                // Full spectrum AI logic (Process Prioritization, Termination, and Composite Actions)
-                                if temp >= 45000 {
-                                    // Extreme thermal: Process Termination (Kill)
-                                    let _ = Command::new("kill").args(["-9", pid_str]).spawn();
-                                } else if temp >= 44000 {
-                                    // Severe thermal: Composite Command (Renice 19 AND Flush RAM to cool down)
-                                    let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid_str);
-                                    let _ = Command::new("sh").args(["-c", &cmd]).spawn();
-                                } else {
-                                    // Mild thermal: Gentle Process Prioritization (Renice 10)
-                                    let _ = Command::new("renice").args(["-n", "10", "-p", pid_str]).spawn();
+                                if let Ok(pid) = pid_str.parse::<i32>() {
+                                    // Protect core system PIDs (init, zygote, system_server) to prevent reboots
+                                    if pid > 1000 {
+                                        if temp >= 44000 {
+                                            // Severe thermal: Composite Command (Renice 19 AND Flush RAM)
+                                            let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid);
+                                            let _ = Command::new("sh").args(["-c", &cmd]).spawn();
+                                        } else {
+                                            // Mild thermal: Gentle Process Prioritization (Renice 10)
+                                            let _ = Command::new("renice").args(["-n", "10", "-p", &pid.to_string()]).spawn();
+                                        }
+                                    }
                                 }
+                                state.last_thermal_action_ts = now;
                                 break;
                             }
                         }
@@ -416,11 +417,20 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     
     // If we are below the threshold AND not charging, go into battery_saver.
     // Otherwise (charging, or above threshold), use balanced.
-    let zone = if level <= cfg.saver_threshold && stat != "Charging" { 
-        "battery_saver" 
+    let mut zone = if level <= cfg.saver_threshold && stat != "Charging" { 
+        "battery_saver".to_string()
     } else { 
-        "balanced" 
-    }.to_string();
+        "balanced".to_string()
+    };
+    
+    // Check for manual override from decoupled TUI
+    let override_path = format!("{}/state/manual_profile", SYS_DIR);
+    if let Ok(manual) = fs::read_to_string(&override_path) {
+        let manual_trim = manual.trim();
+        if !manual_trim.is_empty() {
+            zone = manual_trim.to_string();
+        }
+    }
     
     let mut zone_changed = false;
     let mut scr_changed = false;
