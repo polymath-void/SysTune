@@ -12,6 +12,7 @@ struct AppState {
     last_chg: String,
     therm_throttled: bool,
     last_pause_ts: u64,
+    last_thermal_action_ts: u64,
 }
 
 struct Config {
@@ -20,6 +21,9 @@ struct Config {
     max_daily_soc: u32,
     therm_hi: u32,
     therm_lo: u32,
+    neural_therm_threshold: i32,
+    neural_renice_val: i32,
+    neural_mem_thresh: u64,
 }
 
 fn create_singleton_lock() {
@@ -62,11 +66,58 @@ fn get_screen_state() -> &'static str {
     "ScreenOn"
 }
 
+fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    if now - state.last_thermal_action_ts < 30 { return; } // 30s cooldown
+
+    if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
+        if let Ok(temp) = temp_str.trim().parse::<i32>() {
+            if temp > cfg.neural_therm_threshold {
+                if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
+                    let top_out = String::from_utf8_lossy(&output.stdout);
+                    for line in top_out.lines() {
+                        if line.contains(" 9") && line.contains(".") || line.contains("100.") {
+                            if let Some(pid_str) = line.split_whitespace().next() {
+                                let _ = Command::new("renice").args(["-n", &cfg.neural_renice_val.to_string(), "-p", pid_str]).spawn();
+                                state.last_thermal_action_ts = now;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn check_memory_pressure(cfg: &Config) {
+    if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
+        let mut total = 0;
+        let mut avail = 0;
+        for line in meminfo.lines() {
+            if line.starts_with("MemTotal:") {
+                total = line.split_whitespace().nth(1).unwrap_or("0").parse::<u64>().unwrap_or(0);
+            } else if line.starts_with("MemAvailable:") {
+                avail = line.split_whitespace().nth(1).unwrap_or("0").parse::<u64>().unwrap_or(0);
+                break;
+            }
+        }
+        if total > 0 && avail > 0 && avail < (total * cfg.neural_mem_thresh / 100) {
+            sys_write("/proc/sys/vm/drop_caches", "3");
+        }
+    }
+}
+
 fn load_global_config() -> Config {
-    let mut cfg = Config { saver_threshold: 30, balanced_threshold: 80, max_daily_soc: 85, therm_hi: 380, therm_lo: 340 };
+    let mut cfg = Config { 
+        saver_threshold: 30, balanced_threshold: 80, max_daily_soc: 85, 
+        therm_hi: 380, therm_lo: 340, 
+        neural_therm_threshold: 45000, neural_renice_val: 10, neural_mem_thresh: 15 
+    };
     let paths = vec![
         format!("{}/config/global.conf", SYS_DIR),
         format!("{}/config/orchestrator.conf", SYS_DIR),
+        format!("{}/config/neural.conf", SYS_DIR),
     ];
     for p in paths {
         if let Ok(content) = fs::read_to_string(&p) {
@@ -74,12 +125,16 @@ fn load_global_config() -> Config {
                 let parts: Vec<&str> = line.splitn(2, '=').collect();
                 if parts.len() == 2 {
                     let key = parts[0].trim();
-                    let val = parts[1].trim().trim_matches('"').parse::<u32>().unwrap_or(0);
+                    let val = parts[1].trim().trim_matches('"').parse::<i32>().unwrap_or(0);
                     match key {
-                        "BATTERY_SAVER" => cfg.saver_threshold = val,
-                        "MAX_DAILY_SOC" => cfg.max_daily_soc = val,
-                        "THERM_HI" => cfg.therm_hi = val,
-                        "THERM_LO" => cfg.therm_lo = val,
+                        "BATTERY_SAVER" => cfg.saver_threshold = val as u32,
+                        "BALANCED" => cfg.balanced_threshold = val as u32,
+                        "MAX_DAILY_SOC" => cfg.max_daily_soc = val as u32,
+                        "THERM_HI" => cfg.therm_hi = val as u32,
+                        "THERM_LO" => cfg.therm_lo = val as u32,
+                        "NEURAL_THERM_THRESHOLD" => cfg.neural_therm_threshold = val,
+                        "NEURAL_RENICE_VAL" => cfg.neural_renice_val = val,
+                        "NEURAL_MEM_THRESH" => cfg.neural_mem_thresh = val as u64,
                         _ => {}
                     }
                 }
@@ -359,6 +414,9 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
         state.last_chg = stat.clone();
     }
     
+    check_thermal_anomaly(state, cfg);
+    check_memory_pressure(cfg);
+    
     if scr == "ScreenOn" { 10000 } else { 60000 }
 }
 
@@ -413,7 +471,7 @@ fn main() {
         let cfg = load_global_config();
         let mut state = AppState {
             last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
-            therm_throttled: false, last_pause_ts: 0,
+            therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
         };
         manage_battery_safe(level, &stat, &cfg, &mut state);
         return;
@@ -424,7 +482,7 @@ fn main() {
     let cfg = load_global_config();
     let state = AppState {
         last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
-        therm_throttled: false, last_pause_ts: 0,
+        therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
     };
     listen_loop(state, cfg);
 }
