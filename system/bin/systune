@@ -1,0 +1,10 @@
+#!/system/bin/sh
+# SysTune global command wrapper
+
+# Ensure we are running as root
+if [ "$(id -u)" != "0" ]; then
+    echo "Requesting root access..."
+    exec su -c "/data/adb/modules/SysTune/sys_monitor.sh"
+else
+    exec /data/adb/modules/SysTune/sys_monitor.sh
+fi
