@@ -335,7 +335,13 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     let stat = get_battery_status().unwrap_or_else(|| "Unknown".to_string());
     let scr = get_screen_state().to_string();
     
-    let zone = if level <= cfg.saver_threshold { "battery_saver" } else { "balanced" }.to_string();
+    // If we are below the threshold AND not charging, go into battery_saver.
+    // Otherwise (charging, or above threshold), use balanced.
+    let zone = if level <= cfg.saver_threshold && stat != "Charging" { 
+        "battery_saver" 
+    } else { 
+        "balanced" 
+    }.to_string();
     
     let mut zone_changed = false;
     let mut scr_changed = false;
