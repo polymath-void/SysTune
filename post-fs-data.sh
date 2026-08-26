@@ -1,12 +1,8 @@
 #!/system/bin/sh
-# SysTune Early Unlock (post-fs-data.sh)
-FBT_UC="/sys/kernel/fpsgo/fbt_cam/fbt_cam_uclamp_boost_enable"
-FBT_PID="/sys/kernel/fpsgo/fbt/fbt_attr_by_pid"
-FPSGO_PID="/sys/kernel/fpsgo/composer/fpsgo_control_pid"
+MODDIR="/data/adb/modules/SysTune"
+LOG="$MODDIR/logs/post-fs-data.log"
 
-for node in "$FBT_UC" "$FBT_PID" "$FPSGO_PID"; do
-    if [ -e "$node" ]; then
-        chmod 666 "$node"
-        chcon u:object_r:sysfs:s0 "$node" 2>/dev/null
-    fi
-done
+# Note: FPSGO initialization has been moved to the orchestrator (late_start)
+# This script is intentionally left empty but maintained for future early-boot hooks.
+echo "[$(date)] post-fs-data.sh executed - FPSGO logic deferred to Rust orchestrator" > "$LOG" 2>/dev/null
+exit 0
