@@ -13,6 +13,8 @@ struct AppState {
     therm_throttled: bool,
     last_pause_ts: u64,
     last_thermal_action_ts: u64,
+    last_memory_action_ts: u64,
+    last_check_ts: u64,
 }
 
 struct Config {
@@ -73,6 +75,7 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
     if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(temp) = temp_str.trim().parse::<i32>() {
             if temp >= cfg.neural_therm_threshold {
+                state.last_thermal_action_ts = now;
                 if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
                     let top_out = String::from_utf8_lossy(&output.stdout);
                     for line in top_out.lines() {
@@ -90,7 +93,6 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
                                     // Mild thermal: Gentle Process Prioritization (Renice 10)
                                     let _ = Command::new("renice").args(["-n", "10", "-p", pid_str]).spawn();
                                 }
-                                state.last_thermal_action_ts = now;
                                 break;
                             }
                         }
@@ -101,7 +103,10 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
     }
 }
 
-fn check_memory_pressure(cfg: &Config) {
+fn check_memory_pressure(state: &mut AppState, cfg: &Config) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    if now - state.last_memory_action_ts < 60 { return; } // 60s cooldown
+
     if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
         let mut total = 0;
         let mut avail = 0;
@@ -114,6 +119,7 @@ fn check_memory_pressure(cfg: &Config) {
             }
         }
         if total > 0 && avail > 0 && avail < (total * cfg.neural_mem_thresh / 100) {
+            state.last_memory_action_ts = now;
             // Kernel Memory Tuning (sysctl) + Cache flushing (Composite)
             let _ = Command::new("sh").args(["-c", "sysctl -w vm.swappiness=10 vm.vfs_cache_pressure=150 && sync && echo 3 > /proc/sys/vm/drop_caches"]).spawn();
         }
@@ -134,7 +140,9 @@ fn load_global_config() -> Config {
     for p in paths {
         if let Ok(content) = fs::read_to_string(&p) {
             for line in content.lines() {
-                let parts: Vec<&str> = line.splitn(2, '=').collect();
+                let clean_line = line.split('#').next().unwrap_or("").trim();
+                if clean_line.is_empty() { continue; }
+                let parts: Vec<&str> = clean_line.splitn(2, '=').collect();
                 if parts.len() == 2 {
                     let key = parts[0].trim();
                     let val = parts[1].trim().trim_matches('"').parse::<i32>().unwrap_or(0);
@@ -395,6 +403,10 @@ fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppStat
 // 4. MAIN LOOP
 // ==============================================
 fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    if now - state.last_check_ts < 2 { return 10000; }
+    state.last_check_ts = now;
+
     let level = match get_battery_level() {
         Some(l) => l,
         None => return 5000,
@@ -427,7 +439,7 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     }
     
     check_thermal_anomaly(state, cfg);
-    check_memory_pressure(cfg);
+    check_memory_pressure(state, cfg);
     
     if scr == "ScreenOn" { 10000 } else { 60000 }
 }
@@ -462,7 +474,7 @@ fn listen_loop(mut state: AppState, cfg: Config) {
         loop {
             let res = poll(&mut pfd, 1, timeout);
             if res > 0 && (pfd.revents & POLLIN) != 0 {
-                libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT);
+                while libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT) > 0 {}
             }
             timeout = check_and_apply(&mut state, &cfg);
         }
@@ -484,6 +496,7 @@ fn main() {
         let mut state = AppState {
             last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
             therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
+            last_memory_action_ts: 0, last_check_ts: 0,
         };
         manage_battery_safe(level, &stat, &cfg, &mut state);
         return;
@@ -495,6 +508,7 @@ fn main() {
     let state = AppState {
         last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
         therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
+        last_memory_action_ts: 0, last_check_ts: 0,
     };
     listen_loop(state, cfg);
 }
