@@ -42,14 +42,10 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
         GOV_DIR="$policy/$CUR_GOV"
         
         if [ -d "$GOV_DIR" ]; then
-            # Iterate through all possible MTK rate limit nodes
-            for node in up_rate_limit_us down_rate_limit_us rate_limit_us; do
-                TARGET="$GOV_DIR/$node"
-                if [ -w "$TARGET" ]; then
-                    echo "$CPU_RATE" > "$TARGET" 2>/dev/null
-                fi
-            done
-            log "Tuned $policy ($CUR_GOV) to $CPU_RATE"
+            [ -w "$GOV_DIR/up_rate_limit_us" ] && echo "$RATE_UP_US" > "$GOV_DIR/up_rate_limit_us" 2>/dev/null
+            [ -w "$GOV_DIR/down_rate_limit_us" ] && echo "$RATE_DOWN_US" > "$GOV_DIR/down_rate_limit_us" 2>/dev/null
+            [ -w "$GOV_DIR/rate_limit_us" ] && echo "$RATE_UP_US" > "$GOV_DIR/rate_limit_us" 2>/dev/null
+            log "Tuned $policy ($CUR_GOV) Rate Limits (Up: $RATE_UP_US, Down: $RATE_DOWN_US)"
         fi
     else
         log "Skipped $policy: Governor is $CUR_GOV (Path hidden)"
