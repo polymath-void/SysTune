@@ -60,11 +60,17 @@ done
 # ----------------------------------------------------------
 # 2. Schedtune / UClamp (MTK EAS Tuning)
 # ----------------------------------------------------------
-if [ -f /dev/stune/top-app/schedtune.boost ]; then
-    echo "$BOOST" > /dev/stune/top-app/schedtune.boost
-elif [ -d /sys/fs/cgroup/cpu/top-app ]; then
+if [ -d /sys/fs/cgroup/cpu/top-app ]; then
     # UClamp logic for kernels 5.4+ (Modern Dimensity chips)
-    [ -w /sys/fs/cgroup/cpu/top-app/cpu.uclamp.min ] && echo "$BOOST" > /sys/fs/cgroup/cpu/top-app/cpu.uclamp.min
+    [ -w /sys/fs/cgroup/cpu/top-app/cpu.uclamp.min ] && echo "$UCLAMP_FG_MIN" > /sys/fs/cgroup/cpu/top-app/cpu.uclamp.min 2>/dev/null
+    [ -w /sys/fs/cgroup/cpu/background/cpu.uclamp.max ] && echo "$UCLAMP_BG_MAX" > /sys/fs/cgroup/cpu/background/cpu.uclamp.max 2>/dev/null
+    [ -w /sys/fs/cgroup/cpu/top-app/schedtune.boost ] && echo "$STUNE_BOOST" > /sys/fs/cgroup/cpu/top-app/schedtune.boost 2>/dev/null
+elif [ -d /dev/cpuctl/top-app ]; then
+    # Android 13/14 cgroup v2 mounts
+    [ -w /dev/cpuctl/top-app/cpu.uclamp.min ] && echo "$UCLAMP_FG_MIN" > /dev/cpuctl/top-app/cpu.uclamp.min 2>/dev/null
+    [ -w /dev/cpuctl/background/cpu.uclamp.max ] && echo "$UCLAMP_BG_MAX" > /dev/cpuctl/background/cpu.uclamp.max 2>/dev/null
+elif [ -f /dev/stune/top-app/schedtune.boost ]; then
+    echo "$STUNE_BOOST" > /dev/stune/top-app/schedtune.boost 2>/dev/null
 fi
 
 # ----------------------------------------------------------
@@ -91,6 +97,19 @@ if [ "$(getprop sys.boot_completed)" = "1" ] && service check settings | grep -q
     fi
 else
     log "SKIP: settings service not ready (device still booting)"
+fi
+
+# ----------------------------------------------------------
+# 5. FPSGO (Frame Boost Technology) - Phase 3
+# ----------------------------------------------------------
+FPSGO_PATH="/sys/kernel/fpsgo"
+if [ "$FBT_ENABLE" = "1" ] && [ -d "$FPSGO_PATH" ]; then
+    [ -w "$FPSGO_PATH/fbt/boost_ta" ] && echo "$FBT_BOOST_TA" > "$FPSGO_PATH/fbt/boost_ta" 2>/dev/null
+    [ -w "$FPSGO_PATH/fbt/rescue_percent" ] && echo "$FBT_RESCUE_PERCENT" > "$FPSGO_PATH/fbt/rescue_percent" 2>/dev/null
+    [ -w "$FPSGO_PATH/fbt/ultra_rescue" ] && echo "$FBT_ULTRA_RESCUE" > "$FPSGO_PATH/fbt/ultra_rescue" 2>/dev/null
+    [ -w "$FPSGO_PATH/fbt/floor_bound" ] && echo "$FBT_FLOOR_BOUND" > "$FPSGO_PATH/fbt/floor_bound" 2>/dev/null
+    [ -w "$FPSGO_PATH/fbt_cam/fbt_cam_uclamp_boost_enable" ] && echo "$FBT_CAM_BOOST" > "$FPSGO_PATH/fbt_cam/fbt_cam_uclamp_boost_enable" 2>/dev/null
+    log "FPSGO Tuned: TA=$FBT_BOOST_TA Rescue=$FBT_RESCUE_PERCENT Floor=$FBT_FLOOR_BOUND"
 fi
 
 log "===== Perf efficiency applied successfully ====="
