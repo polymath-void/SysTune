@@ -26,26 +26,15 @@ if [ "$NEW_PROFILE" = "$LAST_PROFILE" ]; then
 fi
 # ---------------------------------
 
-# CPU scaling function
-set_cpu() {
-    local gov="$1" max="$2"
-    for p in /sys/devices/system/cpu/cpufreq/policy*; do
-        echo "$gov" > "$p/scaling_governor" 2>/dev/null
-        if [ "$max" -eq 0 ]; then
-            cat "$p/cpuinfo_max_freq" > "$p/scaling_max_freq" 2>/dev/null
-        else
-            echo "$max" > "$p/scaling_max_freq" 2>/dev/null
-        fi
-    done
-}
+# ---------------------------------
 
-# Apply profile
-case "$NEW_PROFILE" in
-    battery_saver)     set_cpu "schedutil" 800000 ;;
-    balanced_smooth)  set_cpu "schedutil" 1600000 ;;
-    performance)      set_cpu "schedutil" 0 ;;
-    *) exit 0 ;;
-esac
+# Delegate entirely to the unified config-driven engine
+if [ -f "$SYS/apply.sh" ]; then
+    /system/bin/sh "$SYS/apply.sh" "$NEW_PROFILE"
+else
+    echo "ERROR: apply.sh missing!" >> "$LOG"
+    exit 1
+fi
 
 # Persist state atomically
 {
