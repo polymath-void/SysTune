@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=v8.2.0 (Neural Monolith)
-versionCode=83
+version=v8.2.1 (Neural Monolith - Composite)
+versionCode=84
 author=RahmanShuvo
 description=Advanced Event-Driven Kernel Optimizer (100% Native Rust Monolith, Zero Bash Overhead, MTK EAS)

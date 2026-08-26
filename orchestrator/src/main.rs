@@ -78,12 +78,16 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
                     for line in top_out.lines() {
                         if line.contains(" 9") && line.contains(".") || line.contains("100.") {
                             if let Some(pid_str) = line.split_whitespace().next() {
-                                // Dynamic scaling derived from neural execution history dataset
+                                // Full spectrum AI logic (Process Prioritization, Termination, and Composite Actions)
                                 if temp >= 45000 {
+                                    // Extreme thermal: Process Termination (Kill)
                                     let _ = Command::new("kill").args(["-9", pid_str]).spawn();
                                 } else if temp >= 44000 {
-                                    let _ = Command::new("renice").args(["-n", "19", "-p", pid_str]).spawn();
+                                    // Severe thermal: Composite Command (Renice 19 AND Flush RAM to cool down)
+                                    let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid_str);
+                                    let _ = Command::new("sh").args(["-c", &cmd]).spawn();
                                 } else {
+                                    // Mild thermal: Gentle Process Prioritization (Renice 10)
                                     let _ = Command::new("renice").args(["-n", "10", "-p", pid_str]).spawn();
                                 }
                                 state.last_thermal_action_ts = now;
@@ -110,7 +114,8 @@ fn check_memory_pressure(cfg: &Config) {
             }
         }
         if total > 0 && avail > 0 && avail < (total * cfg.neural_mem_thresh / 100) {
-            sys_write("/proc/sys/vm/drop_caches", "3");
+            // Kernel Memory Tuning (sysctl) + Cache flushing (Composite)
+            let _ = Command::new("sh").args(["-c", "sysctl -w vm.swappiness=10 vm.vfs_cache_pressure=150 && sync && echo 3 > /proc/sys/vm/drop_caches"]).spawn();
         }
     }
 }
