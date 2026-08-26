@@ -29,9 +29,9 @@ SET_APP_RESTRICTION() {
     local pkgs="$1"
     local mode="$2"
 
-    # Use the 'service' binary directly - more robust across ROMs
-    if ! service check appops | grep -q "found"; then
-        log "SKIP: appops service not ready"
+    # Production Grade: Ensure the system is fully booted before triggering Binder IPC
+    if [ "$(getprop sys.boot_completed)" != "1" ] || ! service check appops | grep -q "found"; then
+        log "SKIP: appops service not ready (device still booting)"
         return 1
     fi
 
@@ -42,11 +42,11 @@ SET_APP_RESTRICTION() {
         pkg_clean=$(echo "$pkg" | tr -d '[:space:]')
         [ -z "$pkg_clean" ] && continue
         
-        # Standard AppOps call
-        cmd appops set "$pkg_clean" RUN_IN_BACKGROUND "$mode" 2>/dev/null
+        # Standard AppOps call (silenced for uninstalled apps)
+        cmd appops set "$pkg_clean" RUN_IN_BACKGROUND "$mode" >/dev/null 2>&1
         
         if [ "$PROFILE" = "battery_saver" ]; then
-            cmd appops set "$pkg_clean" WAKE_LOCK "$mode" 2>/dev/null
+            cmd appops set "$pkg_clean" WAKE_LOCK "$mode" >/dev/null 2>&1
         fi
     done
 }

@@ -81,17 +81,16 @@ done
 # ----------------------------------------------------------
 # 4. Display Refresh Rate (Service Guarded)
 # ----------------------------------------------------------
-# Use 'service check' to ensure the Settings provider is ready
-
-if service check settings | grep -q "found"; then
+# Use 'getprop' and 'service check' to ensure the Settings provider is safely ready
+if [ "$(getprop sys.boot_completed)" = "1" ] && service check settings | grep -q "found"; then
     CUR_PEAK=$(settings get system peak_refresh_rate 2>/dev/null)
     if [ "$CUR_PEAK" != "$PEAK" ]; then
-        settings put system peak_refresh_rate "$PEAK"
-        settings put system min_refresh_rate "$MIN"
+        settings put system peak_refresh_rate "$PEAK" >/dev/null 2>&1
+        settings put system min_refresh_rate "$MIN" >/dev/null 2>&1
         log "Display set to ${PEAK}Hz"
     fi
 else
-    log "SKIP: settings service not ready"
+    log "SKIP: settings service not ready (device still booting)"
 fi
 
 log "===== Perf efficiency applied successfully ====="
