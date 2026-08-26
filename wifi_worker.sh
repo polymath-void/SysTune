@@ -10,6 +10,7 @@ LOG_FILE="$MODDIR/logs/wifi_worker.log"
 # Ensure persistence layers exist
 [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
 [ -d "$MODDIR/logs" ] || mkdir -p "$MODDIR/logs"
+[ -f "$STATE_DIR/logging_enabled" ] && ENABLE_LOGGING=1 || ENABLE_LOGGING=0
 
 # --- 2. ENVIRONMENT INHERITANCE ---
 # Fallbacks ensure the script never executes with empty strings

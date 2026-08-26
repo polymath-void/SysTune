@@ -9,6 +9,7 @@ LAST_PROFILE_FILE="$STATE_DIR/last_profile"
 LOG="$SYS/logs/auto_profile.log"
 
 mkdir -p "$STATE_DIR"
+[ -f "$STATE_DIR/logging_enabled" ] && ENABLE_LOGGING=1 || ENABLE_LOGGING=0
 
 # Manual fallback
 if [ -z "$NEW_PROFILE" ]; then

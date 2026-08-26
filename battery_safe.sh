@@ -20,8 +20,9 @@ fi
 read -r TEMP < /sys/class/power_supply/battery/temp 2>/dev/null
 read -r CAP < /sys/class/power_supply/battery/capacity 2>/dev/null
 # Note: CUR_STAT (Charging/Discharging) is inherited from service.sh
+[ -f "$STATE_DIR/logging_enabled" ] && ENABLE_LOGGING=1 || ENABLE_LOGGING=0
 
-log_chg() { [ "${ENABLE_LOGGING:-0}" = "1" ] && echo "$(date '+%H:%M:%S') | $1" >> "$LOG"; }
+log_chg() { [ "$ENABLE_LOGGING" = "1" ] && echo "$(date '+%H:%M:%S') | $1" >> "$LOG"; }
 
 # --- MANDATORY REFINEMENT A: STATE RESET ---
 # If unplugged or SoC drops below the trigger, reset the pulse timer

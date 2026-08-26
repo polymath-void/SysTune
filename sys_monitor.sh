@@ -72,6 +72,14 @@ ap_status() {
     fi
 }
 
+logging_status() {
+    if [ -f "$SYS/state/logging_enabled" ]; then
+        echo -e "\033[1;32mON\033[0m"
+    else
+        echo -e "\033[1;31mOFF\033[0m"
+    fi
+}
+
 # ---------- UI & Input ----------
 msg=""
 
@@ -116,7 +124,7 @@ while true; do
     printf "\033[1;34m│\033[0m [3] Force Performance                     \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [4] Drop RAM Caches (Clear Memory)        \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [5] Restart SysTune Daemon                \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m                                         \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [6] Toggle Performance Logs (Now: $(logging_status)) \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [R] Refresh Dashboard       [Q] Quit      \033[1;34m│\033[0m\n"
     printf "\033[1;34m└─────────────────────────────────────────┘\033[0m\n"
 
@@ -143,6 +151,15 @@ while true; do
             pkill -f orchestrator
             sh "$SYS/service.sh"
             msg="Daemon Restarted!"
+            ;;
+        6)
+            if [ -f "$SYS/state/logging_enabled" ]; then
+                rm -f "$SYS/state/logging_enabled"
+                msg="Performance Logging DISABLED"
+            else
+                touch "$SYS/state/logging_enabled"
+                msg="Performance Logging ENABLED"
+            fi
             ;;
         q|Q) 
             clear
