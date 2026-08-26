@@ -68,10 +68,8 @@ impl Config {
 fn determine_zone(level: u32, cfg: &Config) -> &'static str {
     if level <= cfg.saver_threshold {
         "battery_saver"
-    } else if level <= cfg.balanced_threshold {
-        "balanced"
     } else {
-        "balanced_smooth"
+        "balanced"
     }
 }
 

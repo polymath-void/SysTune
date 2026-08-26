@@ -120,11 +120,10 @@ while true; do
     printf "\033[1;34m┌─────────────────────────────────────────┐\033[0m\n"
     printf "\033[1;34m│\033[0m \033[1;37mINSTANT ACTIONS\033[0m                         \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [1] Force Battery Saver                   \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m [2] Force Balanced Smooth                 \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m [3] Force Performance                     \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m [4] Drop RAM Caches (Clear Memory)        \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m [5] Restart SysTune Daemon                \033[1;34m│\033[0m\n"
-    printf "\033[1;34m│\033[0m [6] Toggle Performance Logs (Now: $(logging_status)) \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [2] Force Balanced                        \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [3] Drop RAM Caches (Clear Memory)        \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [4] Restart SysTune Daemon                \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [5] Toggle Performance Logs (Now: $(logging_status)) \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [R] Refresh Dashboard       [Q] Quit      \033[1;34m│\033[0m\n"
     printf "\033[1;34m└─────────────────────────────────────────┘\033[0m\n"
 
@@ -141,18 +140,17 @@ while true; do
 
     case "$key" in
         1) apply_profile "battery_saver" ;;
-        2) apply_profile "balanced_smooth" ;;
-        3) apply_profile "performance" ;;
-        4) 
+        2) apply_profile "balanced" ;;
+        3) 
             echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
             msg="RAM Caches Dropped!"
             ;;
-        5) 
+        4) 
             pkill -f orchestrator
             sh "$SYS/service.sh"
             msg="Daemon Restarted!"
             ;;
-        6)
+        5)
             if [ -f "$SYS/state/logging_enabled" ]; then
                 rm -f "$SYS/state/logging_enabled"
                 msg="Performance Logging DISABLED"
