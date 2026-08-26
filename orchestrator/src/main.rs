@@ -73,6 +73,70 @@ fn determine_zone(level: u32, cfg: &Config) -> &'static str {
     }
 }
 
+use std::collections::HashMap;
+
+fn parse_conf(path: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Ok(content) = fs::read_to_string(path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            let parts: Vec<&str> = line.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                let key = parts[0].trim().to_string();
+                let val = parts[1].trim().trim_matches('"').to_string();
+                map.insert(key, val);
+            }
+        }
+    }
+    map
+}
+
+fn sys_write(path: &str, val: &str) {
+    let _ = fs::write(path, val);
+}
+
+fn apply_profile_natively(zone: &str, level: u32, stat: &str) {
+    let conf_path = format!("{}/config/profiles/{}.conf", SYS_DIR, zone);
+    let map = parse_conf(&conf_path);
+
+    // Write state
+    let state_file = format!("{}/state/auto_profile.status", SYS_DIR);
+    let last_profile = format!("{}/state/last_profile", SYS_DIR);
+    let _ = fs::write(&state_file, format!("Profile: {}\nBattery: {}\n", zone, level));
+    let _ = fs::write(&last_profile, zone);
+
+    // CPU Little (Policy 0)
+    if let Some(v) = map.get("CPU_LITTLE_GOV") { sys_write("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", v); }
+    if let Some(v) = map.get("CPU_LITTLE_MIN") { sys_write("/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq", v); }
+    if let Some(v) = map.get("CPU_LITTLE_MAX") { sys_write("/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq", v); }
+
+    // CPU Big (Policy 6)
+    if let Some(v) = map.get("CPU_BIG_GOV") { sys_write("/sys/devices/system/cpu/cpufreq/policy6/scaling_governor", v); }
+    if let Some(v) = map.get("CPU_BIG_MIN") { sys_write("/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq", v); }
+    if let Some(v) = map.get("CPU_BIG_MAX") { sys_write("/sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq", v); }
+
+    // GPU & Touch
+    if let Some(v) = map.get("GPU_GOV") { sys_write("/sys/class/devfreq/13000000.mali/governor", v); }
+    if let Some(v) = map.get("GPU_MAX") { sys_write("/sys/class/devfreq/13000000.mali/max_freq", v); }
+    if let Some(v) = map.get("TOUCH_BOOST") { sys_write("/sys/module/msm_input/parameters/touch_boost", v); }
+
+    // UClamp
+    let uclamp_fg = map.get("UCLAMP_FG_MIN").cloned().unwrap_or_default();
+    let uclamp_bg = map.get("UCLAMP_BG_MAX").cloned().unwrap_or_default();
+    if std::path::Path::new("/dev/cpuctl/top-app").exists() {
+        sys_write("/dev/cpuctl/top-app/cpu.uclamp.min", &uclamp_fg);
+        sys_write("/dev/cpuctl/background/cpu.uclamp.max", &uclamp_bg);
+    } else if std::path::Path::new("/sys/fs/cgroup/cpu/top-app").exists() {
+        sys_write("/sys/fs/cgroup/cpu/top-app/cpu.uclamp.min", &uclamp_fg);
+        sys_write("/sys/fs/cgroup/cpu/background/cpu.uclamp.max", &uclamp_bg);
+    }
+
+    // Call remaining bash sub-workers natively
+    run_worker(zone, level, stat, "perf_efficiency.sh");
+    run_worker(zone, level, stat, "optimize_runtime.sh");
+}
+
 fn run_worker(zone: &str, level: u32, stat: &str, script: &str) {
     let script_path = format!("{}/{}", SYS_DIR, script);
     if std::path::Path::new(&script_path).exists() {
@@ -103,7 +167,7 @@ fn check_and_apply(last_zone: &mut String, last_scr: &mut String, last_chg: &mut
     if scr != *last_scr { scr_changed = true; *last_scr = scr.clone(); }
     
     if zone_changed || scr_changed {
-        run_worker(&zone, level, &stat, "auto_profile.sh");
+        apply_profile_natively(&zone, level, &stat);
         run_worker(&zone, level, &stat, "wifi_worker.sh");
     }
     
