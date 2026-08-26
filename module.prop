@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=4.0
-versionCode=40
+version=5.0
+versionCode=50
 author=RahmanShuvo
-description=Advanced Event-Driven Magisk Optimizer (Rust Daemon, Battery Save, MTK Big Core Unlock)
+description=Advanced Event-Driven Magisk Optimizer (Rust Daemon, Zero-Fork Profile Engine)
