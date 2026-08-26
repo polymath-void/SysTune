@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=v6.0 (Competition Edition)
-versionCode=60
+version=v8.0 (Monolith Edition)
+versionCode=80
 author=RahmanShuvo
-description=Advanced Event-Driven Kernel Optimizer (Rust Daemon, Zero-Fork Profile Engine, MTK FPSGO)
+description=Advanced Event-Driven Kernel Optimizer (100% Native Rust Monolith, Zero Bash Overhead, MTK EAS)
