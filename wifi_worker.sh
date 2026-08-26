@@ -41,12 +41,12 @@ if [ -f "$CONF_FILE" ]; then
     . "$CONF_FILE"
 else
     # Default fallback if somehow missing
-    TCP_CONG="westwood"; TCP_SYN_RETRIES=5; TCP_SLOW_START=1; FPSGO_BOOST=4
+    TCP_CONG="westwood"; TCP_SYN_RETRIES=5; TCP_SLOW_START=1; FBT_BOOST_TA=5
 fi
 
 SYN_RET="$TCP_SYN_RETRIES"
 SLOW_START="$TCP_SLOW_START"
-BOOST="$FPSGO_BOOST"
+BOOST="$FBT_BOOST_TA"
 
 # --- 5. KERNEL INJECTION ---
 # Function-less injection to maintain absolute shell speed

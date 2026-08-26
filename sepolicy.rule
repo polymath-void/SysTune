@@ -1,3 +1,5 @@
-# Allow root-context (magisk) to access fpsgo sysfs
+# Allow root-context (magisk/ksu) to access fpsgo sysfs
 allow magisk sysfs_fpsgo:dir { search open read };
 allow magisk sysfs_fpsgo:file { read write open getattr };
+allow su sysfs_fpsgo:dir { search open read };
+allow su sysfs_fpsgo:file { read write open getattr };
