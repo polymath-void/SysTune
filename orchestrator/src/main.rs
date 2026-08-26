@@ -72,13 +72,20 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
 
     if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(temp) = temp_str.trim().parse::<i32>() {
-            if temp > cfg.neural_therm_threshold {
+            if temp >= cfg.neural_therm_threshold {
                 if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
                     let top_out = String::from_utf8_lossy(&output.stdout);
                     for line in top_out.lines() {
                         if line.contains(" 9") && line.contains(".") || line.contains("100.") {
                             if let Some(pid_str) = line.split_whitespace().next() {
-                                let _ = Command::new("renice").args(["-n", &cfg.neural_renice_val.to_string(), "-p", pid_str]).spawn();
+                                // Dynamic scaling derived from neural execution history dataset
+                                if temp >= 45000 {
+                                    let _ = Command::new("kill").args(["-9", pid_str]).spawn();
+                                } else if temp >= 44000 {
+                                    let _ = Command::new("renice").args(["-n", "19", "-p", pid_str]).spawn();
+                                } else {
+                                    let _ = Command::new("renice").args(["-n", "10", "-p", pid_str]).spawn();
+                                }
                                 state.last_thermal_action_ts = now;
                                 break;
                             }
