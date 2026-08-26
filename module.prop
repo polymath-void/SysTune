@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=5.0
-versionCode=50
+version=v6.0 (Competition Edition)
+versionCode=60
 author=RahmanShuvo
-description=Advanced Event-Driven Magisk Optimizer (Rust Daemon, Zero-Fork Profile Engine)
+description=Advanced Event-Driven Kernel Optimizer (Rust Daemon, Zero-Fork Profile Engine, MTK FPSGO)
