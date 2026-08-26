@@ -81,10 +81,9 @@ set_timer_slack() {
         while read -r line; do
             case "$line" in
                 Uid:*)
-                    # Extract the real UID (the first number after Uid:)
-                    # Uses shell parameter expansion to trim prefixes/suffixes
-                    uid_val=${line#Uid:[[:space:]]}
-                    uid_val=${uid_val%%[[:space:]]*}
+                    # Native word-splitting gracefully handles any amount of tabs/spaces
+                    set -- $line
+                    uid_val="$2"
                     break
                     ;;
             esac
@@ -93,12 +92,12 @@ set_timer_slack() {
         # 3. Target User Apps only (UID >= 10000)
         [ -n "$uid_val" ] && [ "$uid_val" -ge 10000 ] || continue
 
-        # 4. Target package-like names (com.*)
+        # 4. Target all Android packages (*.* instead of just com.*)
         if [ -r "$pid_dir/cmdline" ]; then
             # Read stops at the first null byte, giving us the process name
             read -r cmd_val < "$pid_dir/cmdline"
             case "$cmd_val" in
-                com.*)
+                *.*)
                     [ -w "$pid_dir/timerslack_ns" ] && \
                     echo "$SLACK_NS" > "$pid_dir/timerslack_ns" 2>/dev/null
                     ;;
