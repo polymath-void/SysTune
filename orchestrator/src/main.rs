@@ -394,6 +394,25 @@ fn listen_loop(mut state: AppState, cfg: Config) {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--apply" {
+        let zone = &args[2];
+        let level = get_battery_level().unwrap_or(50);
+        let stat = get_battery_status().unwrap_or_else(|| "Unknown".to_string());
+        let scr = get_screen_state().to_string();
+        
+        apply_profile_natively(zone, level);
+        manage_wifi_worker(zone, &scr);
+        
+        let cfg = load_global_config();
+        let mut state = AppState {
+            last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
+            therm_throttled: false, last_pause_ts: 0,
+        };
+        manage_battery_safe(level, &stat, &cfg, &mut state);
+        return;
+    }
+
     set_oom_adj();
     create_singleton_lock();
     let cfg = load_global_config();

@@ -84,11 +84,12 @@ logging_status() {
 msg=""
 
 apply_profile() {
-    export NEW_PROFILE="$1"
-    export CUR_BAT="$(bat_lvl)"
-    export CUR_STAT="$(bat_stat)"
-    . "$SYS/auto_profile.sh"
-    msg="Profile changed to $1"
+    if [ -f "$SYS/orchestrator_bin" ]; then
+        "$SYS/orchestrator_bin" --apply "$1"
+    else
+        "$SYS/orchestrator/target/release/orchestrator" --apply "$1"
+    fi
+    msg="Profile changed to $1 (via Rust Engine)"
 }
 
 # main loop
