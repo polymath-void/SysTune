@@ -83,18 +83,30 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
                                 if let Ok(pid) = pid_str.parse::<i32>() {
                                     // Protect core system PIDs (init, zygote, system_server) to prevent reboots
                                     if pid > 1000 {
-                                        if temp >= 44000 {
-                                            // Severe thermal: Composite Command (Renice 19 AND Flush RAM)
-                                            let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid);
-                                            let _ = Command::new("sh").args(["-c", &cmd]).spawn();
-                                        } else {
-                                            // Mild thermal: Gentle Process Prioritization (Renice 10)
-                                            let _ = Command::new("renice").args(["-n", "10", "-p", &pid.to_string()]).spawn();
+                                        // INTELLIGENCE UPGRADE: Check if app is in foreground
+                                        let oom_path = format!("/proc/{}/oom_score_adj", pid);
+                                        let mut is_foreground = false;
+                                        if let Ok(score_str) = fs::read_to_string(&oom_path) {
+                                            if let Ok(score) = score_str.trim().parse::<i32>() {
+                                                // Foreground apps = 0, Visible = 100, Services/Background >= 200
+                                                if score < 200 { is_foreground = true; }
+                                            }
+                                        }
+
+                                        if !is_foreground {
+                                            if temp >= 44000 {
+                                                // Severe thermal: Composite Command (Renice 19 AND Flush RAM)
+                                                let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid);
+                                                let _ = Command::new("sh").args(["-c", &cmd]).spawn();
+                                            } else {
+                                                // Mild thermal: Gentle Process Prioritization (Renice 10)
+                                                let _ = Command::new("renice").args(["-n", "10", "-p", &pid.to_string()]).spawn();
+                                            }
+                                            state.last_thermal_action_ts = now;
+                                            break;
                                         }
                                     }
                                 }
-                                state.last_thermal_action_ts = now;
-                                break;
                             }
                         }
                     }
