@@ -7,9 +7,14 @@ LOG="/data/adb/modules/SysTune/logs/battery_safe.log"
 NOW=$(date +%s)
 
 # --- CONFIGURATION (BU-808 Optimal) ---
-MAX_DAILY_SOC=85   
-THERM_HI=380       
-THERM_LO=340       
+GLOBAL_CONF="/data/adb/modules/SysTune/config/global.conf"
+if [ -f "$GLOBAL_CONF" ]; then
+    . "$GLOBAL_CONF"
+else
+    MAX_DAILY_SOC=85   
+    THERM_HI=380       
+    THERM_LO=340       
+fi
 
 # --- HARDWARE READ ---
 read -r TEMP < /sys/class/power_supply/battery/temp 2>/dev/null

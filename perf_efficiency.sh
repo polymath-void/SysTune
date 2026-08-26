@@ -17,21 +17,16 @@ log() {
 
 log "===== Applying MTK Perf Efficiency: $PROFILE ====="
 
-# Define parameters based on First Principles
-case "$PROFILE" in
-    battery_saver)
-        CPU_RATE=20000 # High latency = Less frequency jitter
-        PEAK=60; MIN=30; BOOST=0
-        ;;
-    performance|balanced_smooth)
-        CPU_RATE=1000  # Low latency = Maximum responsiveness
-        PEAK=120; MIN=60; BOOST=1
-        ;;
-    *) # Balanced
-        CPU_RATE=4000
-        PEAK=120; MIN=60; BOOST=0
-        ;;
-esac
+CONF_FILE="/data/adb/modules/SysTune/config/profiles/${PROFILE}.conf"
+if [ -f "$CONF_FILE" ]; then
+    . "$CONF_FILE"
+else
+    log "Unknown profile: $PROFILE"
+    exit 1
+fi
+PEAK="$PEAK_FPS"
+MIN="$MIN_FPS"
+BOOST="$STUNE_BOOST"
 
 # ----------------------------------------------------------
 # 1. CPU Governor Tuning (sugov_ext & schedutil)

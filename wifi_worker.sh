@@ -36,16 +36,17 @@ if [ "$CURRENT_ID" = "$LAST_ID" ]; then
 fi
 
 # --- 4. TARGET PARAMETERS (Case Logic) ---
-case "$PROFILE" in
-    "performance"|"game_mode")
-        TCP_CONG="cubic"; SYN_RET=3; SLOW_START=0; BOOST=12 ;;
-    "balanced_smooth")
-        TCP_CONG="cubic"; SYN_RET=4; SLOW_START=0; BOOST=8  ;;
-    "battery_saver")
-        TCP_CONG="westwood"; SYN_RET=6; SLOW_START=1; BOOST=0 ;;
-    *) # Default Balanced
-        TCP_CONG="westwood"; SYN_RET=5; SLOW_START=1; BOOST=4 ;;
-esac
+CONF_FILE="/data/adb/modules/SysTune/config/profiles/${PROFILE}.conf"
+if [ -f "$CONF_FILE" ]; then
+    . "$CONF_FILE"
+else
+    # Default fallback if somehow missing
+    TCP_CONG="westwood"; TCP_SYN_RETRIES=5; TCP_SLOW_START=1; FPSGO_BOOST=4
+fi
+
+SYN_RET="$TCP_SYN_RETRIES"
+SLOW_START="$TCP_SLOW_START"
+BOOST="$FPSGO_BOOST"
 
 # --- 5. KERNEL INJECTION ---
 # Function-less injection to maintain absolute shell speed

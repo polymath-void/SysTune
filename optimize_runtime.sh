@@ -53,28 +53,9 @@ SET_APP_RESTRICTION() {
 
 
 
-BLOAT_APPS="
-com.facebook.katana
-com.facebook.appmanager
-com.facebook.services
-com.facebook.system
-com.miui.analytics
-com.google.android.feedback
-com.google.android.printservice.recommendation
-com.bikroy
-org.xbet.client1
-com.facebook.lite
-com.facebook.orca
-prod.app_ku9bdtf1.com
-net.omobio.robisc
-com.arena.banglalinkmela.app
-com.konasl.nagad
-com.bKash.customerapp
-com.feralinteractive.laracroftgol_android
-app.revanced.android.gms
-com.mxtech.videoplayer.pro
-io.metamask
-"
+GLOBAL_CONF="/data/adb/modules/SysTune/config/global.conf"
+[ -f "$GLOBAL_CONF" ] && . "$GLOBAL_CONF"
+
 
 # ----------------------------------------------------------
 # 2. Kernel/System Parameter Writes
@@ -129,27 +110,17 @@ set_timer_slack() {
 # ----------------------------------------------------------
 # 4. Execution Logic (State Machine)
 # ----------------------------------------------------------
-case "$PROFILE" in
+CONF_FILE="/data/adb/modules/SysTune/config/profiles/${PROFILE}.conf"
+if [ -f "$CONF_FILE" ]; then
+    . "$CONF_FILE"
+else
+    log "Unknown profile: $PROFILE"
+    exit 1
+fi
 
-    battery_saver)
-        SET_APP_RESTRICTION "$BLOAT_APPS" "ignore"
-        set_lmk "18432,23040,27648,32256,55296,80640"
-        set_timer_slack 50000000 # 50ms batching
-        ;;
-
-    balanced_smooth|balanced)
-        SET_APP_RESTRICTION "$BLOAT_APPS" "allow"
-        set_lmk "12288,15360,18432,21504,43008,64512"
-        set_timer_slack 20000000 # 20ms batching
-        ;;
-
-    performance|game_mode)
-        SET_APP_RESTRICTION "$BLOAT_APPS" "allow"
-        set_lmk "8192,10240,12288,14336,28672,40960"
-        set_timer_slack 1000000  # 1ms (High responsiveness)
-        ;;
-
-esac
+SET_APP_RESTRICTION "$BLOAT_APPS" "$APP_RESTRICTION"
+set_lmk "$LMK_MINFREE"
+set_timer_slack "$TIMER_SLACK"
 
 log "Optimizations applied for: $PROFILE"
 exit 0
