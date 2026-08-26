@@ -21,22 +21,15 @@ sys_write() {
 }
 
 # ---------- CPU ----------
-set_cpu_gov() {
-    for c in $CPU_PATH/cpu[0-9]*; do
-        sys_write "$c/cpufreq/scaling_governor" "$1"
-    done
-}
-
-set_cpu_min() {
-    for c in $CPU_PATH/cpu[0-9]*; do
-        sys_write "$c/cpufreq/scaling_min_freq" "$1"
-    done
-}
-
-set_cpu_max() {
-    for c in $CPU_PATH/cpu[0-9]*; do
-        sys_write "$c/cpufreq/scaling_max_freq" "$1"
-    done
+# Cluster aware frequency setting
+set_cluster_cpu() {
+    local policy="$1" attr="$2" value="$3"
+    local policy_path="$CPU_PATH/cpufreq/policy${policy}"
+    if [ -d "$policy_path" ]; then
+        for cpu in $(cat "$policy_path/related_cpus" 2>/dev/null); do
+            sys_write "$CPU_PATH/cpu${cpu}/cpufreq/${attr}" "$value"
+        done
+    fi
 }
 
 # ---------- GPU ----------
@@ -57,45 +50,60 @@ set_touch_boost() {
 case "$PROFILE" in
 
 battery_saver)
-    set_cpu_gov powersave
-    set_cpu_min 480000
-    set_cpu_max 1200000
+    set_cluster_cpu 0 scaling_governor powersave
+    set_cluster_cpu 0 scaling_min_freq 480000
+    set_cluster_cpu 0 scaling_max_freq 1200000
+    set_cluster_cpu 6 scaling_governor powersave
+    set_cluster_cpu 6 scaling_min_freq 480000
+    set_cluster_cpu 6 scaling_max_freq 1200000
     set_gpu_gov powersave
     set_gpu_max 450000000
     set_touch_boost 0
 ;;
 
 balanced)
-    set_cpu_gov schedutil
-    set_cpu_min 600000
-    set_cpu_max 1700000
+    set_cluster_cpu 0 scaling_governor schedutil
+    set_cluster_cpu 0 scaling_min_freq 600000
+    set_cluster_cpu 0 scaling_max_freq 1700000
+    set_cluster_cpu 6 scaling_governor schedutil
+    set_cluster_cpu 6 scaling_min_freq 600000
+    set_cluster_cpu 6 scaling_max_freq 2400000
     set_gpu_gov simple_ondemand
     set_gpu_max 850000000
     set_touch_boost 1
 ;;
 
 balanced_smooth)
-    set_cpu_gov schedutil
-    set_cpu_min 650000
-    set_cpu_max 1800000
+    set_cluster_cpu 0 scaling_governor schedutil
+    set_cluster_cpu 0 scaling_min_freq 650000
+    set_cluster_cpu 0 scaling_max_freq 1800000
+    set_cluster_cpu 6 scaling_governor schedutil
+    set_cluster_cpu 6 scaling_min_freq 650000
+    set_cluster_cpu 6 scaling_max_freq 2600000
     set_gpu_gov simple_ondemand
     set_gpu_max 900000000
     set_touch_boost 1
 ;;
 
 performance)
-    set_cpu_gov performance
-    set_cpu_min 1000000
-    set_cpu_max 2000000
+    set_cluster_cpu 0 scaling_governor schedutil
+    set_cluster_cpu 0 scaling_min_freq 1000000
+    set_cluster_cpu 0 scaling_max_freq 2000000
+    set_cluster_cpu 6 scaling_governor performance
+    set_cluster_cpu 6 scaling_min_freq 1200000
+    set_cluster_cpu 6 scaling_max_freq 2800000
     set_gpu_gov performance
     set_gpu_max 1130000000
     set_touch_boost 1
 ;;
 
 game_mode)
-    set_cpu_gov schedutil
-    set_cpu_min 1200000
-    set_cpu_max 2000000
+    set_cluster_cpu 0 scaling_governor schedutil
+    set_cluster_cpu 0 scaling_min_freq 1200000
+    set_cluster_cpu 0 scaling_max_freq 1800000
+    set_cluster_cpu 6 scaling_governor performance
+    set_cluster_cpu 6 scaling_min_freq 1200000
+    set_cluster_cpu 6 scaling_max_freq 2800000
     set_gpu_gov performance
     set_gpu_max 1130000000
     set_touch_boost 1
