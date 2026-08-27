@@ -75,6 +75,7 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
     if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(temp) = temp_str.trim().parse::<i32>() {
             if temp >= cfg.neural_therm_threshold {
+                state.last_thermal_action_ts = now; // Apply cooldown FIRST to prevent blocking loops!
                 if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
                     let top_out = String::from_utf8_lossy(&output.stdout);
                     for line in top_out.lines() {
@@ -93,7 +94,6 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
                                         }
                                     }
                                 }
-                                state.last_thermal_action_ts = now;
                                 break;
                             }
                         }
