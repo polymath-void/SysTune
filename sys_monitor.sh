@@ -116,6 +116,7 @@ while true; do
     # Actions Box
     printf "\033[1;34m┌─────────────────────────────────────────┐\033[0m\n"
     printf "\033[1;34m│\033[0m \033[1;37mINSTANT ACTIONS\033[0m                         \033[1;34m│\033[0m\n"
+    printf "\033[1;34m│\033[0m [0] Auto Profile (Remove Override)        \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [1] Force Battery Saver                   \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [2] Force Balanced                        \033[1;34m│\033[0m\n"
     printf "\033[1;34m│\033[0m [3] Drop RAM Caches (Clear Memory)        \033[1;34m│\033[0m\n"
@@ -136,6 +137,10 @@ while true; do
     read -t "$REFRESH" -n 1 key
 
     case "$key" in
+        0) 
+            rm -f "$SYS/state/manual_profile"
+            msg="Restored Auto Profile Logic!"
+            ;;
         1) apply_profile "battery_saver" ;;
         2) apply_profile "balanced" ;;
         3) 
