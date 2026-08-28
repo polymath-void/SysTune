@@ -1,10 +1,18 @@
 use libc::{bind, poll, pollfd, sockaddr_nl, socket, AF_NETLINK, NETLINK_KOBJECT_UEVENT, POLLIN, SOCK_RAW};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::process::Command;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SYS_DIR: &str = "/data/adb/modules/SysTune";
+
+enum Task {
+    SetAppops(String, String),
+    SetTimerslack(String),
+    CheckThermalAnomaly(i32),
+}
 
 struct AppState {
     last_zone: String,
@@ -15,6 +23,7 @@ struct AppState {
     last_thermal_action_ts: u64,
     last_memory_action_ts: u64,
     last_check_ts: u64,
+    task_tx: Sender<Task>,
 }
 
 struct Config {
@@ -70,35 +79,13 @@ fn get_screen_state() -> &'static str {
 
 fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    if now - state.last_thermal_action_ts < 30 { return; } // 30s cooldown
+    if now - state.last_thermal_action_ts < 30 { return; }
 
     if let Ok(temp_str) = fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(temp) = temp_str.trim().parse::<i32>() {
             if temp >= cfg.neural_therm_threshold {
-                state.last_thermal_action_ts = now; // Apply cooldown FIRST to prevent blocking loops!
-                if let Ok(output) = Command::new("top").args(["-n", "1", "-m", "5"]).output() {
-                    let top_out = String::from_utf8_lossy(&output.stdout);
-                    for line in top_out.lines() {
-                        if line.contains(" 9") && line.contains(".") || line.contains("100.") {
-                            if let Some(pid_str) = line.split_whitespace().next() {
-                                if let Ok(pid) = pid_str.parse::<i32>() {
-                                    // Protect core system PIDs (init, zygote, system_server) to prevent reboots
-                                    if pid > 1000 {
-                                        if temp >= 44000 {
-                                            // Severe thermal: Composite Command (Renice 19 AND Flush RAM)
-                                            let cmd = format!("renice -n 19 -p {} && sync && echo 3 > /proc/sys/vm/drop_caches", pid);
-                                            let _ = Command::new("sh").args(["-c", &cmd]).spawn();
-                                        } else {
-                                            // Mild thermal: Gentle Process Prioritization (Renice 10)
-                                            let _ = Command::new("renice").args(["-n", "10", "-p", &pid.to_string()]).spawn();
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
+                state.last_thermal_action_ts = now;
+                let _ = state.task_tx.send(Task::CheckThermalAnomaly(temp));
             }
         }
     }
@@ -106,7 +93,7 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
 
 fn check_memory_pressure(state: &mut AppState, cfg: &Config) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    if now - state.last_memory_action_ts < 60 { return; } // 60s cooldown
+    if now - state.last_memory_action_ts < 60 { return; }
 
     if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
         let mut total = 0;
@@ -121,8 +108,8 @@ fn check_memory_pressure(state: &mut AppState, cfg: &Config) {
         }
         if total > 0 && avail > 0 && avail < (total * cfg.neural_mem_thresh / 100) {
             state.last_memory_action_ts = now;
-            // Kernel Memory Tuning (sysctl) + Cache flushing (Composite)
-            let _ = Command::new("sh").args(["-c", "sysctl -w vm.swappiness=10 vm.vfs_cache_pressure=150 && sync && echo 3 > /proc/sys/vm/drop_caches"]).spawn();
+            sys_write("/proc/sys/vm/swappiness", "10");
+            sys_write("/proc/sys/vm/vfs_cache_pressure", "150");
         }
     }
 }
@@ -191,10 +178,7 @@ fn log_msg(msg: &str) {
     }
 }
 
-// ==============================================
-// 1. AUTO PROFILE LOGIC
-// ==============================================
-fn apply_profile_natively(zone: &str, level: u32) {
+fn apply_profile_natively(zone: &str, level: u32, state: &AppState) {
     let conf_path = format!("{}/config/profiles/{}.conf", SYS_DIR, zone);
     let map = parse_conf(&conf_path);
 
@@ -203,7 +187,6 @@ fn apply_profile_natively(zone: &str, level: u32) {
 
     let sys_w = |p: &str, k: &str| { if let Some(v) = map.get(k) { sys_write(p, v); } };
 
-    // CPU Policies
     sys_w("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor", "CPU_LITTLE_GOV");
     sys_w("/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq", "CPU_LITTLE_MIN");
     sys_w("/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq", "CPU_LITTLE_MAX");
@@ -211,12 +194,17 @@ fn apply_profile_natively(zone: &str, level: u32) {
     sys_w("/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq", "CPU_BIG_MIN");
     sys_w("/sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq", "CPU_BIG_MAX");
 
-    // GPU & Touch
-    sys_w("/sys/class/devfreq/13000000.mali/governor", "GPU_GOV");
-    sys_w("/sys/class/devfreq/13000000.mali/max_freq", "GPU_MAX");
+    let gpu_paths = vec!["13000000.mali", "kgsl/kgsl-3d0/devfreq", "gpufreq"];
+    for p in gpu_paths {
+        if std::path::Path::new(&format!("/sys/class/devfreq/{}", p)).exists() {
+            sys_w(&format!("/sys/class/devfreq/{}/governor", p), "GPU_GOV");
+            sys_w(&format!("/sys/class/devfreq/{}/max_freq", p), "GPU_MAX");
+            break;
+        }
+    }
+
     sys_w("/sys/module/msm_input/parameters/touch_boost", "TOUCH_BOOST");
 
-    // UClamp
     let uclamp_fg = map.get("UCLAMP_FG_MIN").cloned().unwrap_or_default();
     let uclamp_bg = map.get("UCLAMP_BG_MAX").cloned().unwrap_or_default();
     if std::path::Path::new("/dev/cpuctl/top-app").exists() {
@@ -228,7 +216,7 @@ fn apply_profile_natively(zone: &str, level: u32) {
     }
 
     tune_rate_limits(&map);
-    tune_runtime(&map);
+    tune_runtime(&map, state);
 }
 
 fn tune_rate_limits(map: &HashMap<String, String>) {
@@ -252,7 +240,7 @@ fn tune_rate_limits(map: &HashMap<String, String>) {
     }
 }
 
-fn tune_runtime(map: &HashMap<String, String>) {
+fn tune_runtime(map: &HashMap<String, String>, state: &AppState) {
     let queues = vec!["/sys/block/sda/queue", "/sys/block/mmcblk0/queue"];
     for q in queues {
         sys_write(&format!("{}/scheduler", q), "mq-deadline");
@@ -275,75 +263,28 @@ fn tune_runtime(map: &HashMap<String, String>) {
     }
 
     if let Some(slack) = map.get("TIMER_SLACK") {
-        if let Ok(entries) = fs::read_dir("/proc/") {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.chars().all(char::is_numeric) {
-                    if let Ok(status) = fs::read_to_string(format!("/proc/{}/status", name_str)) {
-                        for line in status.lines() {
-                            if line.starts_with("Uid:") {
-                                let parts: Vec<&str> = line.split_whitespace().collect();
-                                if parts.len() >= 2 {
-                                    if let Ok(uid) = parts[1].parse::<u32>() {
-                                        if uid >= 10000 {
-                                            if let Ok(cmdline) = fs::read_to_string(format!("/proc/{}/cmdline", name_str)) {
-                                                if cmdline.contains('.') {
-                                                    sys_write(&format!("/proc/{}/timerslack_ns", name_str), slack);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let _ = state.task_tx.send(Task::SetTimerslack(slack.clone()));
     }
 
     if let Some(apps) = map.get("BLOAT_APPS") {
         if let Some(mode) = map.get("APP_RESTRICTION") {
-            for app in apps.split_whitespace() {
-                let _ = Command::new("cmd").args(["appops", "set", app, "RUN_IN_BACKGROUND", mode]).spawn();
-            }
+            let _ = state.task_tx.send(Task::SetAppops(apps.clone(), mode.clone()));
         }
     }
 }
 
-
-// ==============================================
-// 2. WIFI WORKER
-// ==============================================
-fn manage_wifi_worker(zone: &str, scr: &str) {
-    let conf_path = format!("{}/config/profiles/{}.conf", SYS_DIR, zone);
-    let map = parse_conf(&conf_path);
-
-    if let Some(cong) = map.get("TCP_CONG") { sys_write("/proc/sys/net/ipv4/tcp_congestion_control", cong); }
-    if let Some(ret) = map.get("TCP_SYN_RETRIES") { sys_write("/proc/sys/net/ipv4/tcp_syn_retries", ret); }
-    if let Some(start) = map.get("TCP_SLOW_START") { sys_write("/proc/sys/net/ipv4/tcp_slow_start_after_idle", start); }
-
-    if scr == "ScreenOn" {
-        if let Some(boost) = map.get("FBT_BOOST_TA") {
-            if let Some(fg) = sys_read("/dev/cpuset/foreground/tasks") {
-                if let Some(pid) = fg.split_whitespace().last() {
-                    if pid.parse::<u32>().unwrap_or(0) > 2000 {
-                        sys_write("/sys/kernel/fpsgo/composer/fpsgo_control_pid", pid);
-                        sys_write("/sys/kernel/fpsgo/fbt/fbt_attr_by_pid", &format!("{} {}", pid, boost));
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ==============================================
-// 3. BATTERY SAFE
-// ==============================================
 fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppState) {
-    let base = "/sys/class/power_supply/mtk-master-charger";
+    let charger_paths = vec!["mtk-master-charger", "battery", "main"];
+    let mut base = String::new();
+    for p in charger_paths {
+        let path = format!("/sys/class/power_supply/{}", p);
+        if std::path::Path::new(&path).exists() {
+            base = path;
+            break;
+        }
+    }
+    if base.is_empty() { return; }
+
     let temp = get_battery_temp().unwrap_or(0);
 
     if stat != "Charging" || level < 80 {
@@ -387,9 +328,13 @@ fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppStat
             } else if elapsed < 300 {
                 current = 500000;
                 tag = "PHASE_3_PULSE_WAIT";
-            } else {
+            } else if elapsed < 600 {
                 current = 1000000;
                 tag = "PHASE_3_RESUME";
+            } else {
+                state.last_pause_ts = 0;
+                current = 1000000;
+                tag = "PHASE_3_CYCLE_RESET";
             }
         }
 
@@ -400,9 +345,6 @@ fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppStat
     log_msg(&format!("[BatterySafe] {} @ {}% ({}C)", tag, level, temp/10));
 }
 
-// ==============================================
-// 4. MAIN LOOP
-// ==============================================
 fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     if now - state.last_check_ts < 2 { return 10000; }
@@ -415,15 +357,12 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     let stat = get_battery_status().unwrap_or_else(|| "Unknown".to_string());
     let scr = get_screen_state().to_string();
     
-    // If we are below the threshold AND not charging, go into battery_saver.
-    // Otherwise (charging, or above threshold), use balanced.
     let mut zone = if level <= cfg.saver_threshold && stat != "Charging" { 
         "battery_saver".to_string()
     } else { 
         "balanced".to_string()
     };
     
-    // Check for manual override from decoupled TUI
     let override_path = format!("{}/state/manual_profile", SYS_DIR);
     if let Ok(manual) = fs::read_to_string(&override_path) {
         let manual_trim = manual.trim();
@@ -439,8 +378,7 @@ fn check_and_apply(state: &mut AppState, cfg: &Config) -> i32 {
     if scr != state.last_scr { scr_changed = true; state.last_scr = scr.clone(); }
     
     if zone_changed || scr_changed {
-        apply_profile_natively(&zone, level);
-        manage_wifi_worker(&zone, &scr);
+        apply_profile_natively(&zone, level, state);
     }
     
     if stat == "Charging" || stat != state.last_chg {
@@ -484,6 +422,17 @@ fn listen_loop(mut state: AppState, cfg: Config) {
         loop {
             let res = poll(&mut pfd, 1, timeout);
             if res > 0 && (pfd.revents & POLLIN) != 0 {
+                let len = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT);
+                if len > 0 {
+                    let payload = String::from_utf8_lossy(&buf[..len as usize]);
+                    if !payload.contains("power_supply") && !payload.contains("backlight") {
+                        while libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT) > 0 {}
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                        if now - state.last_check_ts < (timeout as u64 / 1000) {
+                            continue;
+                        }
+                    }
+                }
                 while libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT) > 0 {}
             }
             timeout = check_and_apply(&mut state, &cfg);
@@ -491,23 +440,106 @@ fn listen_loop(mut state: AppState, cfg: Config) {
     }
 }
 
+fn worker_loop(rx: Receiver<Task>) {
+    let mut buf = String::with_capacity(512);
+    while let Ok(task) = rx.recv() {
+        match task {
+            Task::CheckThermalAnomaly(temp) => {
+                if let Ok(entries) = fs::read_dir("/proc") {
+                    let mut highest_cpu = 0u64;
+                    let mut target_pid = -1;
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name();
+                        let s = fname.to_string_lossy();
+                        if let Ok(pid) = s.parse::<i32>() {
+                            if pid > 1000 {
+                                if let Ok(mut f) = std::fs::File::open(format!("/proc/{}/stat", pid)) {
+                                    buf.clear();
+                                    if f.read_to_string(&mut buf).is_ok() {
+                                        let parts: Vec<&str> = buf.split_whitespace().collect();
+                                        if parts.len() > 14 {
+                                            let utime: u64 = parts[13].parse().unwrap_or(0);
+                                            let stime: u64 = parts[14].parse().unwrap_or(0);
+                                            let total = utime + stime;
+                                            if total > highest_cpu {
+                                                highest_cpu = total;
+                                                target_pid = pid;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if target_pid > 0 {
+                        let prio = if temp >= 44000 { 19 } else { 10 };
+                        unsafe {
+                            libc::setpriority(libc::PRIO_PROCESS, target_pid as u32, prio);
+                        }
+                    }
+                }
+            }
+            Task::SetTimerslack(slack) => {
+                if let Ok(entries) = fs::read_dir("/proc/") {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        if name_str.chars().all(char::is_numeric) {
+                            if let Ok(mut f) = std::fs::File::open(format!("/proc/{}/status", name_str)) {
+                                buf.clear();
+                                if f.read_to_string(&mut buf).is_ok() {
+                                    for line in buf.lines() {
+                                        if line.starts_with("Uid:") {
+                                            let parts: Vec<&str> = line.split_whitespace().collect();
+                                            if parts.len() >= 2 {
+                                                if let Ok(uid) = parts[1].parse::<u32>() {
+                                                    if uid >= 10000 {
+                                                        if let Ok(cmdline) = fs::read_to_string(format!("/proc/{}/cmdline", name_str)) {
+                                                            if cmdline.contains('.') {
+                                                                sys_write(&format!("/proc/{}/timerslack_ns", name_str), &slack);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Task::SetAppops(apps, mode) => {
+                for app in apps.split_whitespace() {
+                    let _ = Command::new("cmd").args(["appops", "set", app, "RUN_IN_BACKGROUND", &mode]).spawn().and_then(|mut c| c.wait());
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    let (tx, rx) = mpsc::channel();
+    
+    std::thread::spawn(move || {
+        worker_loop(rx);
+    });
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() == 3 && args[1] == "--apply" {
         let zone = &args[2];
         let level = get_battery_level().unwrap_or(50);
         let stat = get_battery_status().unwrap_or_else(|| "Unknown".to_string());
-        let scr = get_screen_state().to_string();
         
-        apply_profile_natively(zone, level);
-        manage_wifi_worker(zone, &scr);
-        
-        let cfg = load_global_config();
         let mut state = AppState {
             last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
             therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
-            last_memory_action_ts: 0, last_check_ts: 0,
+            last_memory_action_ts: 0, last_check_ts: 0, task_tx: tx.clone(),
         };
+        apply_profile_natively(zone, level, &state);        
+        let cfg = load_global_config();
         manage_battery_safe(level, &stat, &cfg, &mut state);
         return;
     }
@@ -518,7 +550,7 @@ fn main() {
     let state = AppState {
         last_zone: String::new(), last_scr: String::new(), last_chg: String::new(),
         therm_throttled: false, last_pause_ts: 0, last_thermal_action_ts: 0,
-        last_memory_action_ts: 0, last_check_ts: 0,
+        last_memory_action_ts: 0, last_check_ts: 0, task_tx: tx,
     };
     listen_loop(state, cfg);
 }

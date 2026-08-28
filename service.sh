@@ -30,7 +30,7 @@ chmod 755 "$MODDIR"/*.sh
 
 if [ -f "$BIN" ]; then
     chmod +x "$BIN"
-    exec "$BIN" &
+    nohup "$BIN" </dev/null >"$MODDIR/logs/service.log" 2>&1 &
 else
     echo "[$(date)] SysTune Binary not found at $BIN." > "$MODDIR/logs/service.err"
     exit 1
