@@ -4,7 +4,6 @@
 # Integrated system & auto_profile dashboard
 # ==========================================
 
-REFRESH=3
 CPU_PATH="/sys/devices/system/cpu"
 GPU_PATH="/sys/class/devfreq/13000000.mali"
 SYS="/data/adb/modules/SysTune"
@@ -133,8 +132,8 @@ while true; do
         echo ""
     fi
 
-    # Read input with timeout
-    read -t "$REFRESH" -n 1 key
+    # Read input (blocks until key press)
+    read -n 1 key
 
     case "$key" in
         0) 
