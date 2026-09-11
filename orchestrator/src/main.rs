@@ -1,7 +1,6 @@
 use libc::{bind, poll, pollfd, sockaddr_nl, socket, AF_NETLINK, NETLINK_KOBJECT_UEVENT, POLLIN, SOCK_RAW};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,6 +54,13 @@ fn sys_write(path: &str, val: &str) {
     let _ = fs::write(path, val);
 }
 
+fn sys_write_perm(path: &str, val: &str) {
+    if fs::write(path, val).is_err() {
+        let _ = Command::new("chmod").args(["666", path]).status();
+        let _ = fs::write(path, val);
+    }
+}
+
 fn get_battery_level() -> Option<u32> {
     sys_read("/sys/class/power_supply/battery/capacity").and_then(|s| s.parse().ok())
 }
@@ -93,7 +99,7 @@ fn check_thermal_anomaly(state: &mut AppState, cfg: &Config) {
 
 fn check_memory_pressure(state: &mut AppState, cfg: &Config) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    if now - state.last_memory_action_ts < 60 { return; }
+    if now - state.last_memory_action_ts < 30 { return; }
 
     if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
         let mut total = 0;
@@ -106,10 +112,18 @@ fn check_memory_pressure(state: &mut AppState, cfg: &Config) {
                 break;
             }
         }
-        if total > 0 && avail > 0 && avail < (total * cfg.neural_mem_thresh / 100) {
-            state.last_memory_action_ts = now;
-            sys_write("/proc/sys/vm/swappiness", "10");
-            sys_write("/proc/sys/vm/vfs_cache_pressure", "150");
+        if total > 0 && avail > 0 {
+            let low_thresh = total * cfg.neural_mem_thresh / 100;
+            let recovery_thresh = total * (cfg.neural_mem_thresh + 15) / 100;
+            if avail < low_thresh {
+                state.last_memory_action_ts = now;
+                sys_write("/proc/sys/vm/swappiness", "100");
+                sys_write("/proc/sys/vm/vfs_cache_pressure", "150");
+            } else if avail >= recovery_thresh {
+                state.last_memory_action_ts = now;
+                sys_write("/proc/sys/vm/swappiness", "60");
+                sys_write("/proc/sys/vm/vfs_cache_pressure", "100");
+            }
         }
     }
 }
@@ -299,14 +313,16 @@ fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppStat
             state.therm_throttled = false;
         } else {
             state.therm_throttled = true;
-            sys_write(&format!("{}/input_current_limit", base), "500000");
+            sys_write_perm(&format!("{}/input_current_limit", base), "500000");
+            sys_write_perm(&format!("{}/current_max", base), "500000");
             tag = "THERMAL_THROTTLE";
         }
     }
 
     if tag.is_empty() && level >= cfg.max_daily_soc {
-        sys_write(&format!("{}/input_current_limit", base), "0");
-        sys_write(&format!("{}/constant_charge_current_max", base), "0");
+        sys_write_perm(&format!("{}/input_current_limit", base), "0");
+        sys_write_perm(&format!("{}/constant_charge_current_max", base), "0");
+        sys_write_perm(&format!("{}/current_max", base), "0");
         tag = "LONGEVITY_CAP_HALT";
     }
 
@@ -338,8 +354,10 @@ fn manage_battery_safe(level: u32, stat: &str, cfg: &Config, state: &mut AppStat
             }
         }
 
-        sys_write(&format!("{}/input_current_limit", base), &current.to_string());
-        sys_write(&format!("{}/constant_charge_current_max", base), &current.to_string());
+        let curr_str = current.to_string();
+        sys_write_perm(&format!("{}/input_current_limit", base), &curr_str);
+        sys_write_perm(&format!("{}/constant_charge_current_max", base), &curr_str);
+        sys_write_perm(&format!("{}/current_max", base), &curr_str);
     }
 
     log_msg(&format!("[BatterySafe] {} @ {}% ({}C)", tag, level, temp/10));
@@ -422,18 +440,19 @@ fn listen_loop(mut state: AppState, cfg: Config) {
         loop {
             let res = poll(&mut pfd, 1, timeout);
             if res > 0 && (pfd.revents & POLLIN) != 0 {
-                let len = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT);
-                if len > 0 {
+                let mut relevant_event = false;
+                loop {
+                    let len = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT);
+                    if len <= 0 { break; }
                     let payload = String::from_utf8_lossy(&buf[..len as usize]);
-                    if !payload.contains("power_supply") && !payload.contains("backlight") {
-                        while libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT) > 0 {}
-                        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                        if now - state.last_check_ts < (timeout as u64 / 1000) {
-                            continue;
-                        }
+                    if payload.contains("power_supply") || payload.contains("backlight") {
+                        relevant_event = true;
                     }
                 }
-                while libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), libc::MSG_DONTWAIT) > 0 {}
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                if !relevant_event && (now - state.last_check_ts < (timeout as u64 / 1000)) {
+                    continue;
+                }
             }
             timeout = check_and_apply(&mut state, &cfg);
         }
@@ -441,7 +460,6 @@ fn listen_loop(mut state: AppState, cfg: Config) {
 }
 
 fn worker_loop(rx: Receiver<Task>) {
-    let mut buf = String::with_capacity(512);
     while let Ok(task) = rx.recv() {
         match task {
             Task::CheckThermalAnomaly(temp) => {
@@ -453,13 +471,31 @@ fn worker_loop(rx: Receiver<Task>) {
                         let s = fname.to_string_lossy();
                         if let Ok(pid) = s.parse::<i32>() {
                             if pid > 1000 {
-                                if let Ok(mut f) = std::fs::File::open(format!("/proc/{}/stat", pid)) {
-                                    buf.clear();
-                                    if f.read_to_string(&mut buf).is_ok() {
-                                        let parts: Vec<&str> = buf.split_whitespace().collect();
-                                        if parts.len() > 14 {
-                                            let utime: u64 = parts[13].parse().unwrap_or(0);
-                                            let stime: u64 = parts[14].parse().unwrap_or(0);
+                                // Exclude Android system daemons / framework services (UID < 10000)
+                                if let Ok(status) = fs::read_to_string(format!("/proc/{}/status", pid)) {
+                                    let mut uid = 0u32;
+                                    for line in status.lines() {
+                                        if line.starts_with("Uid:") {
+                                            if let Some(uid_str) = line.split_whitespace().nth(1) {
+                                                uid = uid_str.parse().unwrap_or(0);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    if uid < 10000 { continue; }
+                                } else {
+                                    continue;
+                                }
+
+                                // Robust /proc/[pid]/stat parsing by locating last ')'
+                                if let Ok(stat_str) = fs::read_to_string(format!("/proc/{}/stat", pid)) {
+                                    if let Some(idx) = stat_str.rfind(')') {
+                                        let rest = &stat_str[idx + 1..];
+                                        let parts: Vec<&str> = rest.split_whitespace().collect();
+                                        // Index 11 is utime (14th field), Index 12 is stime (15th field)
+                                        if parts.len() > 12 {
+                                            let utime: u64 = parts[11].parse().unwrap_or(0);
+                                            let stime: u64 = parts[12].parse().unwrap_or(0);
                                             let total = utime + stime;
                                             if total > highest_cpu {
                                                 highest_cpu = total;
@@ -485,26 +521,10 @@ fn worker_loop(rx: Receiver<Task>) {
                         let name = entry.file_name();
                         let name_str = name.to_string_lossy();
                         if name_str.chars().all(char::is_numeric) {
-                            if let Ok(mut f) = std::fs::File::open(format!("/proc/{}/status", name_str)) {
-                                buf.clear();
-                                if f.read_to_string(&mut buf).is_ok() {
-                                    for line in buf.lines() {
-                                        if line.starts_with("Uid:") {
-                                            let parts: Vec<&str> = line.split_whitespace().collect();
-                                            if parts.len() >= 2 {
-                                                if let Ok(uid) = parts[1].parse::<u32>() {
-                                                    if uid >= 10000 {
-                                                        if let Ok(cmdline) = fs::read_to_string(format!("/proc/{}/cmdline", name_str)) {
-                                                            if cmdline.contains('.') {
-                                                                sys_write(&format!("/proc/{}/timerslack_ns", name_str), &slack);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
+                            if let Ok(cgroup) = fs::read_to_string(format!("/proc/{}/cgroup", name_str)) {
+                                // Only apply timer slack to background app processes
+                                if cgroup.contains("/background") || cgroup.contains("/system-background") {
+                                    sys_write(&format!("/proc/{}/timerslack_ns", name_str), &slack);
                                 }
                             }
                         }
