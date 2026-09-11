@@ -1,6 +1,6 @@
 id=SysTune
 name=SysTune
-version=v8.2.10 (Neural Monolith - Race to Idle)
-versionCode=93
+version=v8.2.11 (Neural Monolith - Bulletproof Stability)
+versionCode=94
 author=RahmanShuvo
 description=Advanced Event-Driven Kernel Optimizer (100% Native Rust Monolith, Zero Bash Overhead, MTK EAS)
